@@ -55,17 +55,6 @@ export const ClientDetailsPage: React.FC = () => {
     enabled: !!id,
   });
 
-  if (isLoading || !data) {
-    return (
-      <div className="space-y-4">
-        <div className="h-8 bg-cream-300/60 rounded w-1/4 animate-pulse" />
-        <div className="h-64 bg-cream-300/60 rounded-xl animate-pulse" />
-      </div>
-    );
-  }
-
-  const { client, projects, retainers, calls, followups, payments } = data;
-
   const updateClientMutation = useMutation({
     mutationFn: (updated: any) => api.put(`/clients/${id}`, updated),
     onSuccess: () => {
@@ -78,6 +67,17 @@ export const ClientDetailsPage: React.FC = () => {
       setFormError(err.message || 'Failed to update client');
     },
   });
+
+  if (isLoading || !data) {
+    return (
+      <div className="space-y-4">
+        <div className="h-8 bg-cream-300/60 rounded w-1/4 animate-pulse" />
+        <div className="h-64 bg-cream-300/60 rounded-xl animate-pulse" />
+      </div>
+    );
+  }
+
+  const { client, projects, retainers, calls, followups, payments } = data;
 
   const handleOpenEdit = () => {
     if (!client) return;
