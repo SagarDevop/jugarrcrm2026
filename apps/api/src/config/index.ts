@@ -13,8 +13,8 @@ export const config = {
   jwt: {
     accessSecret: process.env.JWT_ACCESS_SECRET || 'agencyos_super_secret_access_jwt_key_2026_production_grade',
     refreshSecret: process.env.JWT_REFRESH_SECRET || 'agencyos_super_secret_refresh_jwt_key_2026_production_grade',
-    accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
-    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
+    accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '7d',
+    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d',
   },
   cookie: {
     domain: process.env.COOKIE_DOMAIN || undefined,

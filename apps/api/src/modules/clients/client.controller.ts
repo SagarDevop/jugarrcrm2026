@@ -11,6 +11,7 @@ import { AppError } from '../../utils/appError';
 import { emitOrgEvent } from '../../sockets';
 import { canViewFinancials } from '../../middleware/rbac.middleware';
 import { USER_ROLES } from '@agencyos/shared';
+import { calculateAnchorPeriod } from '../retainers/retainer.controller';
 
 // Helper to sanitize client record for sales users who lack finance permissions
 export const sanitizeClientForSales = (clientObj: any, allowFinance: boolean) => {
@@ -106,6 +107,69 @@ export class ClientController {
         .populate('assignedSalesMember', 'name email avatar')
         .populate('assignedProjectManager', 'name email avatar')
         .populate('createdBy', 'name email');
+
+      // Auto-create Retainer contract if service category is Social Media Retainer
+      if (client.serviceCategory && /retainer/i.test(client.serviceCategory)) {
+        const start = new Date(parsedDate);
+        const anchorDay = start.getDate() || 20;
+        const { end } = calculateAnchorPeriod(start, anchorDay);
+        const fee = totalContract > 0 ? totalContract : Number(data.customQuotation || 0);
+
+        await RetainerModel.create({
+          organizationId: user.organizationId,
+          clientId: client._id,
+          serviceName: `${client.businessName} - Social Media Retainer`,
+          packageDetails: {
+            reelsCount: 15,
+            staticPostsCount: 20,
+            graphicDesignsCount: 10,
+            storiesCount: 30,
+            customDeliverables: [],
+          },
+          monthlyFee: fee,
+          anchorDateDay: anchorDay,
+          currentPeriodStart: start,
+          currentPeriodEnd: end,
+          status: 'Active',
+          autoRenew: true,
+          assignedTeam: [client.assignedSalesMember || user._id],
+          currentPeriod: {
+            periodNumber: 1,
+            startDate: start,
+            endDate: end,
+            monthlyFee: fee,
+            billingStatus: remainingBalance === 0 ? 'Paid' : 'Pending',
+            tokenAmount: token,
+            pendingBalance: remainingBalance,
+            deliverablesStatus: {
+              reelsCompleted: 0,
+              staticPostsCompleted: 0,
+              graphicsCompleted: 0,
+              storiesCompleted: 0,
+              clientApproved: false,
+            },
+          },
+          historyPeriods: [],
+          createdBy: user._id,
+        });
+      } else if (client.serviceCategory && /web|software|dev/i.test(client.serviceCategory)) {
+        await ProjectModel.create({
+          organizationId: user.organizationId,
+          clientId: client._id,
+          name: `${client.businessName} - Web Platform Development`,
+          category: 'Web Development',
+          status: 'Planning',
+          totalAmount: totalContract,
+          remainingAmount: remainingBalance,
+          milestones: [
+            { title: 'Requirements & Scope Finalization', status: 'Completed' },
+            { title: 'UI/UX Design & Architecture', status: 'Pending' },
+            { title: 'Frontend & Backend Development', status: 'Pending' },
+            { title: 'Testing & Launch', status: 'Pending' },
+          ],
+          createdBy: user._id,
+        });
+      }
 
       await ActivityEventModel.create({
         organizationId: user.organizationId,

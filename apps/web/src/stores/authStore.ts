@@ -8,9 +8,10 @@ interface AuthState {
   user: User | null;
   organization: Organization | null;
   accessToken: string | null;
+  refreshToken: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  setAuth: (user: User, organization: Organization, accessToken: string) => void;
+  setAuth: (user: User, organization: Organization, accessToken: string, refreshToken?: string) => void;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
 }
@@ -21,16 +22,18 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       organization: null,
       accessToken: null,
+      refreshToken: null,
       isAuthenticated: false,
       isLoading: true,
 
-      setAuth: (user, organization, accessToken) => {
+      setAuth: (user, organization, accessToken, refreshToken) => {
         api.setToken(accessToken);
         getSocket(accessToken);
         set({
           user,
           organization,
           accessToken,
+          refreshToken: refreshToken !== undefined ? refreshToken : get().refreshToken,
           isAuthenticated: true,
           isLoading: false,
         });
@@ -48,6 +51,7 @@ export const useAuthStore = create<AuthState>()(
             user: null,
             organization: null,
             accessToken: null,
+            refreshToken: null,
             isAuthenticated: false,
             isLoading: false,
           });
@@ -78,7 +82,10 @@ export const useAuthStore = create<AuthState>()(
         } catch (err) {
           // Try to refresh token
           try {
-            const refreshRes = await api.post<{ accessToken: string }>('/auth/refresh');
+            const currentRefresh = get().refreshToken;
+            const refreshRes = await api.post<{ accessToken: string; refreshToken?: string }>('/auth/refresh', {
+              refreshToken: currentRefresh,
+            });
             if (refreshRes?.accessToken) {
               api.setToken(refreshRes.accessToken);
               const meRes = await api.get<{ user: User; organization: Organization }>('/auth/me');
@@ -86,6 +93,7 @@ export const useAuthStore = create<AuthState>()(
                 user: meRes.user,
                 organization: meRes.organization,
                 accessToken: refreshRes.accessToken,
+                refreshToken: refreshRes.refreshToken || currentRefresh,
                 isAuthenticated: true,
                 isLoading: false,
               });
@@ -100,6 +108,7 @@ export const useAuthStore = create<AuthState>()(
             user: null,
             organization: null,
             accessToken: null,
+            refreshToken: null,
             isAuthenticated: false,
             isLoading: false,
           });
@@ -110,6 +119,7 @@ export const useAuthStore = create<AuthState>()(
       name: 'agencyos-auth-storage',
       partialize: (state) => ({
         accessToken: state.accessToken,
+        refreshToken: state.refreshToken,
         user: state.user,
         organization: state.organization,
       }),

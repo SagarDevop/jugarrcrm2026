@@ -8,6 +8,7 @@ import { RetainerModel } from '../../models/retainer.model';
 import { UserModel } from '../../models/user.model';
 import { LeadModel } from '../../models/lead.model';
 import { ApiResponse } from '../../utils/apiResponse';
+import { calculateAnchorPeriod } from '../retainers/retainer.controller';
 
 export class FinanceController {
   static async getOverview(req: Request, res: Response, next: NextFunction) {
@@ -52,6 +53,90 @@ export class FinanceController {
         { $group: { _id: null, total: { $sum: '$remainingBalance' } } },
       ]);
       const pendingReceivables = receivablesResult?.total || 0;
+
+      // Auto-sync: If any active client has a retainer service category but no RetainerModel record yet, auto-create it
+      const retainerClients = await ClientModel.find({
+        organizationId: orgId,
+        serviceCategory: { $regex: /retainer/i },
+        status: { $in: ['Active', 'Prospect', 'On Hold'] },
+      });
+
+      for (const rc of retainerClients) {
+        const hasRetainer = await RetainerModel.exists({ clientId: rc._id, organizationId: orgId });
+        if (!hasRetainer) {
+          const start = rc.startDate || rc.createdAt || new Date();
+          const anchorDay = new Date(start).getDate() || 20;
+          const { end } = calculateAnchorPeriod(new Date(start), anchorDay);
+          const fee = rc.totalContractAmount > 0 ? rc.totalContractAmount : (rc.customQuotation || 0);
+
+          await RetainerModel.create({
+            organizationId: orgId,
+            clientId: rc._id,
+            serviceName: `${rc.businessName} - Social Media Retainer`,
+            packageDetails: {
+              reelsCount: 15,
+              staticPostsCount: 20,
+              graphicDesignsCount: 10,
+              storiesCount: 30,
+              customDeliverables: [],
+            },
+            monthlyFee: fee,
+            anchorDateDay: anchorDay,
+            currentPeriodStart: start,
+            currentPeriodEnd: end,
+            status: 'Active',
+            autoRenew: true,
+            assignedTeam: rc.assignedSalesMember ? [rc.assignedSalesMember] : (rc.createdBy ? [rc.createdBy] : []),
+            currentPeriod: {
+              periodNumber: 1,
+              startDate: start,
+              endDate: end,
+              monthlyFee: fee,
+              billingStatus: rc.remainingBalance === 0 ? 'Paid' : 'Pending',
+              tokenAmount: rc.initialToken || 0,
+              pendingBalance: rc.remainingBalance || 0,
+              deliverablesStatus: {
+                reelsCompleted: 0,
+                staticPostsCompleted: 0,
+                graphicsCompleted: 0,
+                storiesCompleted: 0,
+                clientApproved: false,
+              },
+            },
+            historyPeriods: [],
+            createdBy: rc.createdBy,
+          });
+        }
+      }
+
+      // Auto-sync: If any active client has Web Development service category but no ProjectModel record yet, auto-create it
+      const devClients = await ClientModel.find({
+        organizationId: orgId,
+        serviceCategory: { $regex: /web|software|dev/i },
+        status: { $in: ['Active', 'Prospect', 'On Hold'] },
+      });
+
+      for (const dc of devClients) {
+        const hasProject = await ProjectModel.exists({ clientId: dc._id, organizationId: orgId });
+        if (!hasProject) {
+          await ProjectModel.create({
+            organizationId: orgId,
+            clientId: dc._id,
+            name: `${dc.businessName} - Web Platform Development`,
+            category: 'Web Development',
+            status: 'Planning',
+            totalAmount: dc.totalContractAmount || 0,
+            remainingAmount: dc.remainingBalance || 0,
+            milestones: [
+              { title: 'Requirements & Scope Finalization', status: 'Completed' },
+              { title: 'UI/UX Design & Architecture', status: 'Pending' },
+              { title: 'Frontend & Backend Development', status: 'Pending' },
+              { title: 'Testing & Launch', status: 'Pending' },
+            ],
+            createdBy: dc.createdBy,
+          });
+        }
+      }
 
       // Active Retainers MRR
       const [mrrResult] = await RetainerModel.aggregate([

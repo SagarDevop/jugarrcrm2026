@@ -29,7 +29,7 @@ export const LoginPage: React.FC = () => {
 
     try {
       const res = await api.post('/auth/login', { email, password });
-      setAuth(res.user, res.organization, res.accessToken);
+      setAuth(res.user, res.organization, res.accessToken, res.refreshToken);
 
       const targetPath = res.user.role === 'SUPER_ADMIN' ? '/admin/dashboard' : '/sales/dashboard';
       navigate(targetPath, { replace: true });

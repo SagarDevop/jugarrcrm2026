@@ -4,16 +4,26 @@ const BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 class ApiClient {
   private accessToken: string | null = null;
+  private isRefreshing: boolean = false;
 
   setToken(token: string | null) {
     this.accessToken = token;
   }
 
   getToken(): string | null {
+    if (!this.accessToken) {
+      try {
+        const stored = localStorage.getItem('agencyos-auth-storage');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          this.accessToken = parsed?.state?.accessToken || null;
+        }
+      } catch (e) {}
+    }
     return this.accessToken;
   }
 
-  async request<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  async request<T = any>(endpoint: string, options: RequestInit & { _isRetry?: boolean } = {}): Promise<T> {
     const url = endpoint.startsWith('http') ? endpoint : `${BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
 
     const headers: Record<string, string> = {
@@ -21,8 +31,9 @@ class ApiClient {
       ...(options.headers as Record<string, string>),
     };
 
-    if (this.accessToken) {
-      headers['Authorization'] = `Bearer ${this.accessToken}`;
+    const token = this.getToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
     }
 
     const response = await fetch(url, {
@@ -31,7 +42,68 @@ class ApiClient {
       credentials: 'include', // sends cookies
     });
 
-    const data: ApiResponse<T> = await response.json();
+    // Handle 401 Unauthorized by attempting to refresh token
+    if (
+      response.status === 401 &&
+      !options._isRetry &&
+      !endpoint.includes('/auth/login') &&
+      !endpoint.includes('/auth/refresh')
+    ) {
+      if (!this.isRefreshing) {
+        this.isRefreshing = true;
+        try {
+          const authStorage = localStorage.getItem('agencyos-auth-storage');
+          let refreshToken: string | null = null;
+          if (authStorage) {
+            try {
+              const parsed = JSON.parse(authStorage);
+              refreshToken = parsed?.state?.refreshToken || null;
+            } catch (e) {}
+          }
+
+          const refreshRes = await fetch(`${BASE_URL}/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ refreshToken }),
+          });
+
+          if (refreshRes.ok) {
+            const refreshData = await refreshRes.json();
+            const newAccessToken = refreshData?.data?.accessToken;
+            if (newAccessToken) {
+              this.setToken(newAccessToken);
+              if (authStorage) {
+                try {
+                  const parsed = JSON.parse(authStorage);
+                  parsed.state.accessToken = newAccessToken;
+                  if (refreshData?.data?.refreshToken) {
+                    parsed.state.refreshToken = refreshData.data.refreshToken;
+                  }
+                  localStorage.setItem('agencyos-auth-storage', JSON.stringify(parsed));
+                } catch (e) {}
+              }
+              this.isRefreshing = false;
+              // Retry original request with new token
+              return this.request<T>(endpoint, { ...options, _isRetry: true });
+            }
+          }
+        } catch (refreshErr) {
+          // Refresh failed
+        } finally {
+          this.isRefreshing = false;
+        }
+
+        // If refresh failed or was unauthorized, clear auth and redirect to login
+        this.setToken(null);
+        localStorage.removeItem('agencyos-auth-storage');
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
+      }
+    }
+
+    const data: ApiResponse<T> = await response.json().catch(() => ({}));
 
     if (!response.ok) {
       const errorMsg = data.error || data.message || `Request failed with status ${response.status}`;

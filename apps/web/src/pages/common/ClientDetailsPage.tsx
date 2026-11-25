@@ -23,6 +23,7 @@ import {
   Edit3,
   X,
   AlertCircle,
+  Plus,
 } from 'lucide-react';
 
 export const ClientDetailsPage: React.FC = () => {
@@ -32,6 +33,7 @@ export const ClientDetailsPage: React.FC = () => {
   const isSuperAdmin = user?.role === 'SUPER_ADMIN';
 
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showAddRetainerModal, setShowAddRetainerModal] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [editFormData, setEditFormData] = useState({
     clientName: '',
@@ -42,7 +44,20 @@ export const ClientDetailsPage: React.FC = () => {
     status: 'Active' as ClientStatus,
   });
 
-  const { data, isLoading } = useQuery<{
+  const [retainerFormData, setRetainerFormData] = useState({
+    serviceName: 'Full Social Media Growth Retainer',
+    monthlyFee: 3000,
+    anchorDateDay: 22,
+    startDate: new Date().toISOString().split('T')[0],
+    packageDetails: {
+      reelsCount: 15,
+      staticPostsCount: 20,
+      graphicDesignsCount: 10,
+      storiesCount: 30,
+    },
+  });
+
+  const { data, isLoading, isError, error, refetch } = useQuery<{
     client: Client;
     projects: Project[];
     retainers: Retainer[];
@@ -53,6 +68,7 @@ export const ClientDetailsPage: React.FC = () => {
     queryKey: ['client-details', id],
     queryFn: () => api.get(`/clients/${id}`),
     enabled: !!id,
+    retry: 1,
   });
 
   const updateClientMutation = useMutation({
@@ -67,6 +83,46 @@ export const ClientDetailsPage: React.FC = () => {
       setFormError(err.message || 'Failed to update client');
     },
   });
+
+  const createRetainerMutation = useMutation({
+    mutationFn: (newRet: any) => api.post('/retainers', newRet),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['client-details', id] });
+      queryClient.invalidateQueries({ queryKey: ['admin-retainers'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-finance-overview'] });
+      setShowAddRetainerModal(false);
+    },
+  });
+
+  if (isError) {
+    return (
+      <div className="p-8 text-center bg-white border border-rose-200 rounded-2xl max-w-lg mx-auto mt-12 space-y-4 shadow-sm">
+        <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+          <AlertCircle size={24} />
+        </div>
+        <div className="space-y-1">
+          <h3 className="text-base font-bold text-slate-800">Unable to Load Client Profile</h3>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            {(error as any)?.message || 'Your session may have expired or this client record could not be retrieved.'}
+          </p>
+        </div>
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <button
+            onClick={() => refetch()}
+            className="px-4 py-2 bg-[#991B1B] hover:bg-[#7F1D1D] text-white rounded-xl text-xs font-semibold cursor-pointer shadow-sm transition-colors"
+          >
+            Retry Loading
+          </button>
+          <NavLink
+            to="/admin/clients"
+            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors"
+          >
+            Back to Directory
+          </NavLink>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading || !data) {
     return (
@@ -267,9 +323,36 @@ export const ClientDetailsPage: React.FC = () => {
 
           {/* Social Media Retainers */}
           <div className="cream-card p-5">
-            <h2 className="text-sm font-bold text-charcoal-900 flex items-center gap-2 mb-3">
-              <CalendarClock size={16} className="text-cyan-700" /> Social Media Retainers ({retainers.length})
-            </h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-bold text-charcoal-900 flex items-center gap-2">
+                <CalendarClock size={16} className="text-cyan-700" /> Social Media Retainers ({retainers.length})
+              </h2>
+              {isSuperAdmin && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const start = client.startDate || client.createdAt || new Date().toISOString();
+                    const day = new Date(start).getDate() || 20;
+                    setRetainerFormData({
+                      serviceName: `${client.businessName} - Social Media Growth Retainer`,
+                      monthlyFee: client.totalContractAmount > 0 ? client.totalContractAmount : 3000,
+                      anchorDateDay: day,
+                      startDate: new Date(start).toISOString().split('T')[0],
+                      packageDetails: {
+                        reelsCount: 15,
+                        staticPostsCount: 20,
+                        graphicDesignsCount: 10,
+                        storiesCount: 30,
+                      },
+                    });
+                    setShowAddRetainerModal(true);
+                  }}
+                  className="px-2.5 py-1 bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border border-cyan-200 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                >
+                  <Plus size={12} /> Add Retainer Contract
+                </button>
+              )}
+            </div>
             {retainers.length > 0 ? (
               <div className="space-y-3">
                 {retainers.map((ret) => (
@@ -438,6 +521,146 @@ export const ClientDetailsPage: React.FC = () => {
                   className="px-5 py-2 bg-[#991B1B] hover:bg-[#7F1D1D] disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow-md shadow-red-900/20 cursor-pointer"
                 >
                   {updateClientMutation.isPending ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Configure Social Media Retainer Modal */}
+      {showAddRetainerModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="cream-card p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl border-2 border-cream-300">
+            <div className="flex items-center justify-between pb-4 border-b border-cream-300">
+              <div>
+                <h2 className="text-base font-bold text-charcoal-900">Configure Retainer Contract</h2>
+                <p className="text-xs text-charcoal-600">Setup recurring monthly contract for {client.businessName}</p>
+              </div>
+              <button
+                onClick={() => setShowAddRetainerModal(false)}
+                className="text-charcoal-500 hover:text-charcoal-900 p-1 rounded-lg hover:bg-cream-200 transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                createRetainerMutation.mutate({
+                  clientId: id,
+                  serviceName: retainerFormData.serviceName,
+                  monthlyFee: Number(retainerFormData.monthlyFee),
+                  anchorDateDay: Number(retainerFormData.anchorDateDay),
+                  startDate: retainerFormData.startDate,
+                  packageDetails: retainerFormData.packageDetails,
+                });
+              }}
+              className="space-y-4 mt-4 text-xs"
+            >
+              <div>
+                <label className="block text-xs font-semibold text-charcoal-800 mb-1">Retainer Service Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={retainerFormData.serviceName}
+                  onChange={(e) => setRetainerFormData({ ...retainerFormData, serviceName: e.target.value })}
+                  className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-charcoal-800 mb-1">Monthly Recurring Fee (₹) *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={retainerFormData.monthlyFee}
+                    onChange={(e) => setRetainerFormData({ ...retainerFormData, monthlyFee: Number(e.target.value) })}
+                    className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-charcoal-800 mb-1">Anchor Billing Day (1-31) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="31"
+                    required
+                    value={retainerFormData.anchorDateDay}
+                    onChange={(e) => setRetainerFormData({ ...retainerFormData, anchorDateDay: Number(e.target.value) })}
+                    className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-charcoal-800 mb-1 flex items-center gap-1.5">
+                  <Calendar size={13} className="text-[#991B1B]" />
+                  <span>Contract Start Date *</span>
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={retainerFormData.startDate}
+                  onChange={(e) => setRetainerFormData({ ...retainerFormData, startDate: e.target.value })}
+                  className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-charcoal-800 mb-1.5">Monthly Deliverables</label>
+                <div className="grid grid-cols-2 gap-2 bg-cream-100 p-2.5 rounded-lg border border-cream-300">
+                  <div>
+                    <label className="text-[10px] text-charcoal-600 block">Reels per Month</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={retainerFormData.packageDetails.reelsCount}
+                      onChange={(e) =>
+                        setRetainerFormData({
+                          ...retainerFormData,
+                          packageDetails: { ...retainerFormData.packageDetails, reelsCount: Number(e.target.value) },
+                        })
+                      }
+                      className="w-full bg-white border border-cream-300 rounded px-2 py-1 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-charcoal-600 block">Posts per Month</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={retainerFormData.packageDetails.staticPostsCount}
+                      onChange={(e) =>
+                        setRetainerFormData({
+                          ...retainerFormData,
+                          packageDetails: { ...retainerFormData.packageDetails, staticPostsCount: Number(e.target.value) },
+                        })
+                      }
+                      className="w-full bg-white border border-cream-300 rounded px-2 py-1 text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-cream-300 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowAddRetainerModal(false)}
+                  className="px-4 py-2 bg-cream-200 hover:bg-cream-300 text-charcoal-800 text-xs font-semibold rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={createRetainerMutation.isPending}
+                  className="px-5 py-2 bg-[#991B1B] hover:bg-[#7F1D1D] disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow-md shadow-red-900/20 cursor-pointer"
+                >
+                  {createRetainerMutation.isPending ? 'Activating...' : 'Activate Retainer'}
                 </button>
               </div>
             </form>

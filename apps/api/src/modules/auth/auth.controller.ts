@@ -18,12 +18,12 @@ export class AuthController {
 
       res.cookie('refreshToken', result.tokens.refreshToken, {
         ...COOKIE_OPTIONS,
-        maxAge: 7 * 24 * 60 * 60 * 1000,
+        maxAge: 30 * 24 * 60 * 60 * 1000,
       });
 
       res.cookie('accessToken', result.tokens.accessToken, {
         ...COOKIE_OPTIONS,
-        maxAge: 15 * 60 * 1000,
+        maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
       await logAudit({
@@ -43,6 +43,7 @@ export class AuthController {
           user: result.user,
           organization: result.organization,
           accessToken: result.tokens.accessToken,
+          refreshToken: result.tokens.refreshToken,
         },
         'Organization and Super Admin account created successfully',
         201
@@ -58,12 +59,12 @@ export class AuthController {
 
       res.cookie('refreshToken', result.tokens.refreshToken, {
         ...COOKIE_OPTIONS,
-        maxAge: 7 * 24 * 60 * 60 * 1000,
+        maxAge: 30 * 24 * 60 * 60 * 1000,
       });
 
       res.cookie('accessToken', result.tokens.accessToken, {
         ...COOKIE_OPTIONS,
-        maxAge: 15 * 60 * 1000,
+        maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
       await logAudit({
@@ -83,6 +84,7 @@ export class AuthController {
           user: result.user,
           organization: result.organization,
           accessToken: result.tokens.accessToken,
+          refreshToken: result.tokens.refreshToken,
         },
         'Logged in successfully'
       );
@@ -102,15 +104,19 @@ export class AuthController {
 
       res.cookie('refreshToken', tokens.refreshToken, {
         ...COOKIE_OPTIONS,
-        maxAge: 7 * 24 * 60 * 60 * 1000,
+        maxAge: 30 * 24 * 60 * 60 * 1000,
       });
 
       res.cookie('accessToken', tokens.accessToken, {
         ...COOKIE_OPTIONS,
-        maxAge: 15 * 60 * 1000,
+        maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
-      return ApiResponse.success(res, { accessToken: tokens.accessToken }, 'Session refreshed');
+      return ApiResponse.success(
+        res,
+        { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken },
+        'Session refreshed'
+      );
     } catch (error) {
       next(error);
     }
