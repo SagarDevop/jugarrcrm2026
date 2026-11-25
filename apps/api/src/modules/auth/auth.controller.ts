@@ -7,7 +7,7 @@ import { logAudit } from '../../middleware/audit.middleware';
 const COOKIE_OPTIONS = {
   httpOnly: true,
   secure: config.cookie.secure,
-  sameSite: 'lax' as const,
+  sameSite: (config.cookie.secure ? 'none' : 'lax') as 'none' | 'lax',
   domain: config.cookie.domain,
 };
 
