@@ -54,7 +54,7 @@ Render servers run on dynamic cloud IPs. Make sure your MongoDB Atlas cluster ac
 | **Branch** | `main` |
 | **Root Directory** | *(Leave completely empty/blank)* |
 | **Runtime** | `Node` |
-| **Build Command** | `npm install && npm run build:backend` |
+| **Build Command** | `npm install --include=dev && npm run build:backend` |
 | **Start Command** | `npm start` |
 | **Instance Type** | `Free` |
 
