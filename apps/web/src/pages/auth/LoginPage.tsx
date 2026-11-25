@@ -2,12 +2,13 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 import { api } from '../../lib/api';
-import { Mail, Lock, ShieldCheck, UserCheck, ArrowRight, Sparkles } from 'lucide-react';
+import { Mail, Lock, ShieldCheck, UserCheck, ArrowRight, Sparkles, Eye, EyeOff } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
   const [selectedRole, setSelectedRole] = useState<'admin' | 'sales'>('admin');
-  const [email, setEmail] = useState('sagar@jugarr.in');
-  const [password, setPassword] = useState('sagarjugarr2026');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -17,13 +18,8 @@ export const LoginPage: React.FC = () => {
   const handleRoleSelect = (role: 'admin' | 'sales') => {
     setSelectedRole(role);
     setError(null);
-    if (role === 'admin') {
-      setEmail('sagar@jugarr.in');
-      setPassword('sagarjugarr2026');
-    } else {
-      setEmail('');
-      setPassword('');
-    }
+    setEmail('');
+    setPassword('');
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -197,13 +193,22 @@ export const LoginPage: React.FC = () => {
                   <Lock size={16} />
                 </div>
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your password"
-                  className="w-full bg-[#FFFFFF] border border-[#D1D5DB] rounded-lg pl-10 pr-3.5 py-2.5 text-xs text-[#111827] placeholder-[#9CA3AF] focus:outline-none focus:border-[#991B1B] focus:ring-1 focus:ring-[#991B1B] transition-all"
+                  autoComplete="current-password"
+                  className="w-full bg-[#FFFFFF] border border-[#D1D5DB] rounded-lg pl-10 pr-10 py-2.5 text-xs text-[#111827] placeholder-[#9CA3AF] focus:outline-none focus:border-[#991B1B] focus:ring-1 focus:ring-[#991B1B] transition-all"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-[#9CA3AF] hover:text-[#111827] transition-colors cursor-pointer"
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
               </div>
             </div>
 

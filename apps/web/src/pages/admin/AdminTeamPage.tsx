@@ -12,6 +12,9 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
+  Trash2,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 export const AdminTeamPage: React.FC = () => {
@@ -20,6 +23,8 @@ export const AdminTeamPage: React.FC = () => {
   const [selectedUserForReset, setSelectedUserForReset] = useState<User | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [resetSuccess, setResetSuccess] = useState<string | null>(null);
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [showAddPassword, setShowAddPassword] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -61,9 +66,23 @@ export const AdminTeamPage: React.FC = () => {
         setSelectedUserForReset(null);
         setResetSuccess(null);
         setNewPassword('');
+        setShowResetPassword(false);
       }, 1500);
     },
   });
+
+  const deleteMemberMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/team/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-team-users'] });
+    },
+  });
+
+  const handleDeleteMember = (u: User) => {
+    if (confirm(`Are you sure you want to permanently delete team member "${u.name}" (${u.email})?`)) {
+      deleteMemberMutation.mutate(u._id);
+    }
+  };
 
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -146,15 +165,29 @@ export const AdminTeamPage: React.FC = () => {
                       </button>
                     </td>
                     <td className="py-3.5 px-4 text-right">
-                      <button
-                        onClick={() => {
-                          setSelectedUserForReset(u);
-                          setNewPassword('');
-                        }}
-                        className="px-2.5 py-1 bg-cream-200 hover:bg-cream-300 text-charcoal-900 border border-cream-300 rounded text-xs inline-flex items-center gap-1 font-semibold transition-colors"
-                      >
-                        <KeyRound size={12} /> Reset Password
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => {
+                            setSelectedUserForReset(u);
+                            setNewPassword('');
+                            setShowResetPassword(false);
+                          }}
+                          className="px-2.5 py-1 bg-cream-200 hover:bg-cream-300 text-charcoal-900 border border-cream-300 rounded-lg text-xs inline-flex items-center gap-1 font-semibold transition-colors cursor-pointer"
+                        >
+                          <KeyRound size={12} /> Reset Password
+                        </button>
+
+                        {u.role !== USER_ROLES.SUPER_ADMIN && (
+                          <button
+                            onClick={() => handleDeleteMember(u)}
+                            disabled={deleteMemberMutation.isPending}
+                            className="p-1.5 text-slate-400 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                            title={`Delete ${u.name}`}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -194,15 +227,25 @@ export const AdminTeamPage: React.FC = () => {
             >
               <div>
                 <label className="block text-charcoal-800 font-semibold mb-1">New Password *</label>
-                <input
-                  type="password"
-                  required
-                  minLength={6}
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Min 6 characters"
-                  className="w-full bg-white border border-cream-300 rounded px-3 py-2 text-charcoal-900 focus:outline-none focus:border-charcoal-900"
-                />
+                <div className="relative">
+                  <input
+                    type={showResetPassword ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Min 6 characters"
+                    className="w-full bg-white border border-cream-300 rounded-lg px-3 pr-10 py-2 text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowResetPassword(!showResetPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                    title={showResetPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showResetPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
               </div>
 
               <div className="pt-3 border-t border-cream-300 flex justify-end gap-2">
@@ -258,14 +301,25 @@ export const AdminTeamPage: React.FC = () => {
 
               <div>
                 <label className="block text-charcoal-800 font-semibold mb-1">Initial Password *</label>
-                <input
-                  type="password"
-                  required
-                  minLength={6}
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  className="w-full bg-white border border-cream-300 rounded px-3 py-2 text-charcoal-900 focus:outline-none focus:border-charcoal-900"
-                />
+                <div className="relative">
+                  <input
+                    type={showAddPassword ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    placeholder="Min 6 characters"
+                    className="w-full bg-white border border-cream-300 rounded-lg px-3 pr-10 py-2 text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowAddPassword(!showAddPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                    title={showAddPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showAddPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

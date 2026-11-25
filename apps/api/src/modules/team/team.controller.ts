@@ -143,4 +143,39 @@ export class TeamController {
       next(error);
     }
   }
+
+  static async deleteMember(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+
+      if (id === req.user!._id.toString()) {
+        throw new AppError('Super Admin cannot delete their own account.', 400);
+      }
+
+      const user = await UserModel.findOneAndDelete({
+        _id: id,
+        organizationId: req.user!.organizationId,
+      });
+
+      if (!user) {
+        throw new AppError('Team member not found.', 404);
+      }
+
+      await logAudit({
+        organizationId: req.user!.organizationId,
+        userId: req.user!._id,
+        userEmail: req.user!.email,
+        action: 'TEAM_MEMBER_DELETED',
+        entityType: 'User',
+        entityId: id,
+        changes: { name: user.name, email: user.email, role: user.role },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
+      return ApiResponse.success(res, null, 'Team member deleted successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
