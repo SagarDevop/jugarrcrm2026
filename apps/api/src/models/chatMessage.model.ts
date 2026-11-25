@@ -8,6 +8,11 @@ export interface ChatMessageDocument extends Document {
   senderRole: string;
   message: string;
   attachments: string[];
+  readBy: {
+    userId: Types.ObjectId;
+    name: string;
+    readAt: Date;
+  }[];
   sentAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -49,6 +54,17 @@ const chatMessageSchema = new Schema<ChatMessageDocument>(
       type: [String],
       default: [],
     },
+    readBy: [
+      {
+        userId: {
+          type: Schema.Types.ObjectId,
+          ref: 'User',
+          required: true,
+        },
+        name: { type: String, required: true },
+        readAt: { type: Date, default: Date.now },
+      },
+    ],
     sentAt: {
       type: Date,
       default: Date.now,

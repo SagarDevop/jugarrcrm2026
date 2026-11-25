@@ -10,13 +10,14 @@ import {
   Send,
   Users,
   Search,
-  Sparkles,
-  Smile,
-  Shield,
-  Briefcase,
-  CheckCircle,
+  Check,
+  CheckCheck,
+  Clock,
+  Trash2,
+  Info,
   X,
-  Radio,
+  AlertTriangle,
+  Eye,
 } from 'lucide-react';
 
 const EMOJI_OPTIONS = ['🏢', '🔥', '🎯', '🚀', '💬', '💡', '💰', '⚡', '💎', '📈'];
@@ -26,10 +27,14 @@ export const ChatPage: React.FC = () => {
   const { user } = useAuthStore();
   const queryClient = useQueryClient();
 
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const [messageText, setMessageText] = useState('');
   const [search, setSearch] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showDeleteRoomConfirm, setShowDeleteRoomConfirm] = useState(false);
+  const [selectedMessageForInfo, setSelectedMessageForInfo] = useState<ChatMessage | null>(null);
 
   // New Group Form state
   const [groupName, setGroupName] = useState('');
@@ -72,7 +77,14 @@ export const ChatPage: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // 4. Socket.IO Real-Time Listener
+  // 4. Mark active room messages as read when activeRoomId changes or messages arrive
+  useEffect(() => {
+    if (activeRoomId) {
+      api.post(`/chat/rooms/${activeRoomId}/read`).catch(() => {});
+    }
+  }, [activeRoomId]);
+
+  // 5. Socket.IO Real-Time Listener
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
@@ -81,42 +93,156 @@ export const ChatPage: React.FC = () => {
       // If message is for currently active room, update cache
       if (payload.roomId === activeRoomId) {
         queryClient.setQueryData<ChatMessage[]>(['chat-messages', activeRoomId], (old = []) => {
+          // If a temporary optimistic message exists with matching content from this user, replace it
+          const existingTempIndex = old.findIndex(
+            (m) => m._id.startsWith('temp-') && m.senderId === payload.message.senderId && m.message === payload.message.message
+          );
+
+          if (existingTempIndex !== -1) {
+            const updated = [...old];
+            updated[existingTempIndex] = payload.message;
+            return updated;
+          }
+
           if (old.some((m) => m._id === payload.message._id)) return old;
           return [...old, payload.message];
         });
+
+        // If message is from someone else, automatically mark as read since we are viewing this room
+        if (payload.message.senderId !== user?._id) {
+          api.post(`/chat/rooms/${activeRoomId}/read`).catch(() => {});
+        }
       }
       // Also invalidate rooms list so lastMessage updates
       queryClient.invalidateQueries({ queryKey: ['chat-rooms'] });
     };
 
+    const handleMessagesRead = (payload: {
+      roomId: string;
+      userId: string;
+      userName: string;
+      readAt: string;
+    }) => {
+      if (payload.roomId === activeRoomId) {
+        queryClient.setQueryData<ChatMessage[]>(['chat-messages', activeRoomId], (old = []) => {
+          return old.map((m) => {
+            const alreadyRead = m.readBy?.some((r) => r.userId === payload.userId);
+            if (alreadyRead) return m;
+            return {
+              ...m,
+              readBy: [
+                ...(m.readBy || []),
+                {
+                  userId: payload.userId,
+                  name: payload.userName,
+                  readAt: payload.readAt,
+                },
+              ],
+            };
+          });
+        });
+      }
+    };
+
     const handleRoomCreated = (newRoom: ChatRoom) => {
-      queryClient.setQueryData<ChatRoom[]>(['chat-rooms'], (old = []) => [newRoom, ...old]);
+      queryClient.setQueryData<ChatRoom[]>(['chat-rooms'], (old = []) => {
+        if (old.some((r) => r._id === newRoom._id)) return old;
+        return [newRoom, ...old];
+      });
+    };
+
+    const handleRoomDeleted = (payload: { roomId: string }) => {
+      queryClient.setQueryData<ChatRoom[]>(['chat-rooms'], (old = []) =>
+        old.filter((r) => r._id !== payload.roomId)
+      );
+      if (activeRoomId === payload.roomId) {
+        queryClient.invalidateQueries({ queryKey: ['chat-rooms'] });
+        setActiveRoomId(null);
+      }
     };
 
     socket.on('chat:message', handleNewMessage);
+    socket.on('chat:messages_read', handleMessagesRead);
     socket.on('chat:room_created', handleRoomCreated);
+    socket.on('chat:room_deleted', handleRoomDeleted);
 
     return () => {
       socket.off('chat:message', handleNewMessage);
+      socket.off('chat:messages_read', handleMessagesRead);
       socket.off('chat:room_created', handleRoomCreated);
+      socket.off('chat:room_deleted', handleRoomDeleted);
     };
-  }, [activeRoomId, queryClient]);
+  }, [activeRoomId, queryClient, user?._id]);
 
-  // 5. Send Message Mutation
+  // 6. Send Message Mutation (Optimistic WhatsApp-Style)
   const sendMutation = useMutation({
-    mutationFn: (msg: string) =>
-      api.post(`/chat/rooms/${activeRoomId}/messages`, { message: msg }),
-    onSuccess: (newMsg) => {
-      setMessageText('');
-      queryClient.setQueryData<ChatMessage[]>(['chat-messages', activeRoomId], (old = []) => [
-        ...old,
-        newMsg,
-      ]);
+    mutationFn: ({ message, tempId }: { message: string; tempId: string }) =>
+      api.post(`/chat/rooms/${activeRoomId}/messages`, { message }),
+    onSuccess: (newMsg, variables) => {
+      queryClient.setQueryData<ChatMessage[]>(['chat-messages', activeRoomId], (old = []) => {
+        return old.map((m) => (m._id === variables.tempId ? newMsg : m));
+      });
       queryClient.invalidateQueries({ queryKey: ['chat-rooms'] });
+    },
+    onError: (_err, variables) => {
+      // Mark or keep message
+      console.error('Failed to send message:', variables.tempId);
     },
   });
 
-  // 6. Create Group Room Mutation
+  // 7. Instant Optimistic Send Handler (0s lag feel)
+  const sendOptimisticMessage = (textToSend: string) => {
+    if (!textToSend.trim() || !activeRoomId) return;
+
+    const trimmed = textToSend.trim();
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const nowIso = new Date().toISOString();
+
+    const optimisticMsg: ChatMessage = {
+      _id: tempId,
+      organizationId: user?.organizationId || '',
+      roomId: activeRoomId,
+      senderId: user?._id || '',
+      senderName: user?.name || 'You',
+      senderRole: user?.role || 'SALES_REP',
+      message: trimmed,
+      sentAt: nowIso,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      readBy: [
+        {
+          userId: user?._id || '',
+          name: user?.name || 'You',
+          readAt: nowIso,
+        },
+      ],
+    };
+
+    // Instantly append to query cache
+    queryClient.setQueryData<ChatMessage[]>(['chat-messages', activeRoomId], (old = []) => [
+      ...old,
+      optimisticMsg,
+    ]);
+
+    // Instant smooth scroll
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 10);
+
+    // Background sync with server
+    sendMutation.mutate({ message: trimmed, tempId });
+  };
+
+  const handleSendMessage = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!messageText.trim() || !activeRoomId) return;
+
+    const text = messageText;
+    setMessageText(''); // Clear input instantly!
+    sendOptimisticMessage(text);
+  };
+
+  // 8. Create Group Room Mutation
   const createRoomMutation = useMutation({
     mutationFn: (payload: any) => api.post('/chat/rooms', payload),
     onSuccess: (newRoom) => {
@@ -129,11 +255,19 @@ export const ChatPage: React.FC = () => {
     },
   });
 
-  const handleSendMessage = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!messageText.trim() || !activeRoomId) return;
-    sendMutation.mutate(messageText.trim());
-  };
+  // 9. Delete Group Room Mutation (Super Admin Only)
+  const deleteRoomMutation = useMutation({
+    mutationFn: (roomId: string) => api.delete(`/chat/rooms/${roomId}`),
+    onSuccess: (_, deletedRoomId) => {
+      setShowDeleteRoomConfirm(false);
+      queryClient.setQueryData<ChatRoom[]>(['chat-rooms'], (old = []) =>
+        old.filter((r) => r._id !== deletedRoomId)
+      );
+      queryClient.invalidateQueries({ queryKey: ['chat-rooms'] });
+      const remaining = rooms.filter((r) => r._id !== deletedRoomId);
+      setActiveRoomId(remaining.length > 0 ? remaining[0]._id : null);
+    },
+  });
 
   const handleCreateGroupSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -150,9 +284,10 @@ export const ChatPage: React.FC = () => {
 
   const activeRoom = rooms.find((r) => r._id === activeRoomId);
 
-  const filteredRooms = rooms.filter((r) =>
-    r.name.toLowerCase().includes(search.toLowerCase()) ||
-    (r.lastMessage?.text || '').toLowerCase().includes(search.toLowerCase())
+  const filteredRooms = rooms.filter(
+    (r) =>
+      r.name.toLowerCase().includes(search.toLowerCase()) ||
+      (r.lastMessage?.text || '').toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -296,17 +431,30 @@ export const ChatPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Members Avatars preview */}
-              <div className="hidden md:flex items-center -space-x-2">
-                {activeRoom.members?.slice(0, 4).map((m, idx) => (
-                  <div
-                    key={idx}
-                    title={`${m.name} (${m.role})`}
-                    className="w-7 h-7 rounded-full bg-slate-800 text-white text-[10px] font-bold border-2 border-white flex items-center justify-center"
+              {/* Right Controls: Members Preview & Super Admin Delete Action */}
+              <div className="flex items-center gap-3">
+                <div className="hidden md:flex items-center -space-x-2">
+                  {activeRoom.members?.slice(0, 4).map((m, idx) => (
+                    <div
+                      key={idx}
+                      title={`${m.name} (${m.role})`}
+                      className="w-7 h-7 rounded-full bg-slate-800 text-white text-[10px] font-bold border-2 border-white flex items-center justify-center"
+                    >
+                      {m.name?.[0] || 'U'}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Delete Channel Button - Visible ONLY to Super Admin */}
+                {isSuperAdmin && (
+                  <button
+                    onClick={() => setShowDeleteRoomConfirm(true)}
+                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all cursor-pointer border border-transparent hover:border-red-200"
+                    title="Delete Group Channel (Admin Only)"
                   >
-                    {m.name?.[0] || 'U'}
-                  </div>
-                ))}
+                    <Trash2 size={16} />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -329,7 +477,14 @@ export const ChatPage: React.FC = () => {
               ) : (
                 messages.map((msg) => {
                   const isMe = msg.senderId === user?._id;
-                  const isSuperAdmin = msg.senderRole === 'SUPER_ADMIN';
+                  const isSuperAdminSender = msg.senderRole === 'SUPER_ADMIN';
+                  const isPending = msg._id.startsWith('temp-');
+
+                  // Seen-by calculations: readers other than the sender
+                  const readersOtherThanSender = (msg.readBy || []).filter(
+                    (r) => r.userId !== msg.senderId
+                  );
+                  const isReadByOthers = readersOtherThanSender.length > 0;
 
                   return (
                     <div
@@ -343,7 +498,7 @@ export const ChatPage: React.FC = () => {
                         className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0 shadow-2xs ${
                           isMe
                             ? 'bg-[#991B1B]'
-                            : isSuperAdmin
+                            : isSuperAdminSender
                             ? 'bg-slate-900 border border-red-500/50'
                             : 'bg-slate-700'
                         }`}
@@ -359,29 +514,76 @@ export const ChatPage: React.FC = () => {
                           </span>
                           <span
                             className={`px-1.5 py-0.2 rounded text-[9px] font-semibold ${
-                              isSuperAdmin
+                              isSuperAdminSender
                                 ? 'bg-red-100 text-[#991B1B]'
                                 : 'bg-slate-200 text-slate-700'
                             }`}
                           >
-                            {isSuperAdmin ? 'Admin' : 'Sales'}
-                          </span>
-                          <span className="text-[10px] text-slate-400">
-                            {new Date(msg.sentAt).toLocaleTimeString([], {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
+                            {isSuperAdminSender ? 'Admin' : 'Sales'}
                           </span>
                         </div>
 
+                        {/* WhatsApp-Style Bubble with Integrated Timestamp and Double Ticks */}
                         <div
-                          className={`p-3 rounded-2xl text-xs leading-relaxed break-words shadow-2xs ${
+                          className={`p-3 rounded-2xl text-xs leading-relaxed break-words shadow-2xs relative group ${
                             isMe
                               ? 'bg-[#991B1B] text-white rounded-tr-none'
                               : 'bg-white border border-[#E5E7EB] text-slate-900 rounded-tl-none'
                           }`}
                         >
-                          {msg.message}
+                          <div className="pr-1">{msg.message}</div>
+
+                          {/* Footer Info: Sent time + WhatsApp Status Ticks */}
+                          <div
+                            className={`flex items-center justify-end gap-1 mt-1 text-[10px] select-none ${
+                              isMe ? 'text-white/80' : 'text-slate-400'
+                            }`}
+                          >
+                            <span>
+                              {new Date(msg.sentAt).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </span>
+
+                            {/* Status Ticks for Sent Messages */}
+                            {isMe && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedMessageForInfo(msg)}
+                                className="inline-flex items-center cursor-pointer hover:scale-110 transition-transform"
+                                title={
+                                  isPending
+                                    ? 'Sending...'
+                                    : isReadByOthers
+                                    ? `Read by ${readersOtherThanSender.length} team members (Click to view)`
+                                    : 'Delivered to server (Click to view)'
+                                }
+                              >
+                                {isPending ? (
+                                  <Clock size={11} className="text-white/70 animate-pulse ml-0.5" />
+                                ) : isReadByOthers ? (
+                                  /* Double Blue / Cyan Ticks (Read / Seen) */
+                                  <CheckCheck size={14} className="text-cyan-300 stroke-[2.5] ml-0.5" />
+                                ) : (
+                                  /* Double White Ticks (Delivered to Server) */
+                                  <CheckCheck size={14} className="text-white/60 stroke-[2] ml-0.5" />
+                                )}
+                              </button>
+                            )}
+
+                            {/* Message Info button on hover for incoming messages */}
+                            {!isMe && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedMessageForInfo(msg)}
+                                className="opacity-0 group-hover:opacity-100 transition-opacity ml-1 text-slate-400 hover:text-slate-700"
+                                title="Message info & read receipts"
+                              >
+                                <Info size={11} />
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -399,9 +601,7 @@ export const ChatPage: React.FC = () => {
               {QUICK_REACTIONS.map((emoji) => (
                 <button
                   key={emoji}
-                  onClick={() => {
-                    sendMutation.mutate(emoji);
-                  }}
+                  onClick={() => sendOptimisticMessage(emoji)}
                   className="px-2 py-0.5 bg-white border border-slate-200 rounded-lg text-sm hover:bg-slate-100 hover:scale-110 transition-all cursor-pointer shadow-2xs shrink-0"
                 >
                   {emoji}
@@ -418,13 +618,13 @@ export const ChatPage: React.FC = () => {
                 type="text"
                 value={messageText}
                 onChange={(e) => setMessageText(e.target.value)}
-                placeholder={`Message #${activeRoom.name}... (Press Enter to send)`}
+                placeholder={`Message #${activeRoom.name}... (Press Enter to send instantly)`}
                 className="flex-1 bg-[#F5F6F8] border border-slate-200 rounded-xl px-4 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#991B1B]"
               />
 
               <button
                 type="submit"
-                disabled={!messageText.trim() || sendMutation.isPending}
+                disabled={!messageText.trim()}
                 className="px-4 py-2.5 bg-[#991B1B] hover:bg-[#7F1D1D] disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-md shadow-red-900/20 transition-all cursor-pointer shrink-0"
               >
                 <Send size={14} />
@@ -438,6 +638,175 @@ export const ChatPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* MESSAGE INFO / READ RECEIPTS MODAL (WhatsApp Style "Message Info") */}
+      {selectedMessageForInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full border border-[#E5E7EB] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-6 py-4 bg-[#0F172A] text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Info size={16} className="text-cyan-400" />
+                <h3 className="font-bold text-sm">Message Info & Read Receipts</h3>
+              </div>
+              <button
+                onClick={() => setSelectedMessageForInfo(null)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5 text-xs">
+              {/* Message Preview Box */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
+                <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1.5">
+                  <span className="font-semibold text-slate-700">
+                    {selectedMessageForInfo.senderName}
+                  </span>
+                  <span>
+                    {new Date(selectedMessageForInfo.sentAt).toLocaleString([], {
+                      dateStyle: 'medium',
+                      timeStyle: 'short',
+                    })}
+                  </span>
+                </div>
+                <p className="text-slate-900 font-medium text-xs leading-relaxed">
+                  {selectedMessageForInfo.message}
+                </p>
+              </div>
+
+              {/* Read By List */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                    <CheckCheck size={15} className="text-cyan-500 stroke-[2.5]" />
+                    <span>Read by</span>
+                  </div>
+                  <span className="text-[10px] font-semibold px-2 py-0.5 bg-cyan-50 text-cyan-700 border border-cyan-200 rounded-full">
+                    {(selectedMessageForInfo.readBy || []).filter(
+                      (r) => r.userId !== selectedMessageForInfo.senderId
+                    ).length}{' '}
+                    members
+                  </span>
+                </div>
+
+                {(() => {
+                  const readers = (selectedMessageForInfo.readBy || []).filter(
+                    (r) => r.userId !== selectedMessageForInfo.senderId
+                  );
+
+                  if (readers.length === 0) {
+                    return (
+                      <div className="p-4 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-center text-slate-400 text-xs">
+                        Delivered to server. Not yet read by other team members.
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="max-h-48 overflow-y-auto space-y-2 border border-slate-200 rounded-xl p-2.5 bg-slate-50">
+                      {readers.map((reader, idx) => (
+                        <div
+                          key={idx}
+                          className="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-100 shadow-2xs"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-7 h-7 rounded-full bg-slate-800 text-white font-bold flex items-center justify-center text-[10px]">
+                              {reader.name?.[0] || 'U'}
+                            </div>
+                            <div>
+                              <span className="block font-bold text-slate-800 text-xs">
+                                {reader.name}
+                              </span>
+                              <span className="block text-[10px] text-cyan-600 font-medium">
+                                Seen / Read
+                              </span>
+                            </div>
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-medium">
+                            {new Date(reader.readAt).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit',
+                            })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Delivery Status */}
+              <div className="pt-3 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500">
+                <div className="flex items-center gap-1.5">
+                  <CheckCheck size={14} className="text-slate-400 stroke-2" />
+                  <span>Delivered at</span>
+                </div>
+                <span>
+                  {new Date(selectedMessageForInfo.sentAt).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  })}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setSelectedMessageForInfo(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE GROUP CHANNEL CONFIRMATION MODAL (Super Admin Only) */}
+      {showDeleteRoomConfirm && activeRoom && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full border border-[#E5E7EB] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-6 text-center space-y-4">
+              <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 mx-auto flex items-center justify-center">
+                <AlertTriangle size={24} />
+              </div>
+
+              <div className="space-y-1">
+                <h3 className="font-bold text-base text-slate-900">
+                  Delete #{activeRoom.name}?
+                </h3>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Are you sure you want to permanently delete this group channel? All messages and
+                  chat history will be removed for all team members. This action cannot be undone.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteRoomConfirm(false)}
+                  className="px-4 py-2 border border-slate-300 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={deleteRoomMutation.isPending}
+                  onClick={() => deleteRoomMutation.mutate(activeRoom._id)}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-md shadow-red-600/20 transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Trash2 size={14} />
+                  <span>{deleteRoomMutation.isPending ? 'Deleting...' : 'Delete Channel'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CREATE NEW GROUP MODAL */}
       {showCreateModal && (

@@ -155,6 +155,13 @@ export class ChatController {
         senderRole: user.role,
         message: message.trim(),
         attachments: Array.isArray(attachments) ? attachments : [],
+        readBy: [
+          {
+            userId: user._id,
+            name: user.name,
+            readAt: new Date(),
+          },
+        ],
         sentAt: new Date(),
       });
 
@@ -175,6 +182,70 @@ export class ChatController {
       });
 
       return ApiResponse.success(res, savedMessage, 'Message sent successfully.', 201);
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async markAsRead(req: Request, res: Response, next: NextFunction) {
+    try {
+      const user = req.user!;
+      const { roomId } = req.params;
+
+      const now = new Date();
+
+      await ChatMessageModel.updateMany(
+        {
+          organizationId: user.organizationId,
+          roomId,
+          senderId: { $ne: user._id },
+          'readBy.userId': { $ne: user._id },
+        },
+        {
+          $addToSet: {
+            readBy: {
+              userId: user._id,
+              name: user.name,
+              readAt: now,
+            },
+          },
+        }
+      );
+
+      emitOrgEvent(String(user.organizationId), 'chat:messages_read', {
+        roomId,
+        userId: String(user._id),
+        userName: user.name,
+        readAt: now.toISOString(),
+      });
+
+      return ApiResponse.success(res, null, 'Messages marked as read');
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async deleteRoom(req: Request, res: Response, next: NextFunction) {
+    try {
+      const user = req.user!;
+      const { roomId } = req.params;
+
+      // Only Super Admin has authority to delete group channels
+      if (user.role !== USER_ROLES.SUPER_ADMIN) {
+        throw new AppError('Only Super Admin has authority to delete group channels.', 403);
+      }
+
+      const room = await ChatRoomModel.findOne({ _id: roomId, organizationId: user.organizationId });
+      if (!room) {
+        throw new AppError('Chat channel not found.', 404);
+      }
+
+      await ChatMessageModel.deleteMany({ roomId, organizationId: user.organizationId });
+      await ChatRoomModel.deleteOne({ _id: roomId, organizationId: user.organizationId });
+
+      emitOrgEvent(String(user.organizationId), 'chat:room_deleted', { roomId });
+
+      return ApiResponse.success(res, null, 'Group channel deleted successfully');
     } catch (err) {
       next(err);
     }

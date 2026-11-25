@@ -447,5 +447,10 @@ export interface ChatMessage extends BaseEntity {
   senderRole: string;
   message: string;
   attachments?: string[];
+  readBy?: {
+    userId: string;
+    name: string;
+    readAt: string;
+  }[];
   sentAt: string;
 }
