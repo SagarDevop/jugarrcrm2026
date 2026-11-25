@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useParams, NavLink } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
-import { Client, Project, Retainer, Payment, Call, FollowUp } from '@agencyos/shared';
+import { useAuthStore } from '../../stores/authStore';
+import { Client, Project, Retainer, Payment, Call, FollowUp, CLIENT_STATUSES, ClientStatus } from '@agencyos/shared';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import {
   Building,
@@ -19,10 +20,27 @@ import {
   Clock,
   ArrowLeft,
   CheckCircle2,
+  Edit3,
+  X,
+  AlertCircle,
 } from 'lucide-react';
 
 export const ClientDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const queryClient = useQueryClient();
+  const { user } = useAuthStore();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [editFormData, setEditFormData] = useState({
+    clientName: '',
+    businessName: '',
+    phone: '',
+    email: '',
+    startDate: '',
+    status: 'Active' as ClientStatus,
+  });
 
   const { data, isLoading } = useQuery<{
     client: Client;
@@ -48,15 +66,68 @@ export const ClientDetailsPage: React.FC = () => {
 
   const { client, projects, retainers, calls, followups, payments } = data;
 
+  const updateClientMutation = useMutation({
+    mutationFn: (updated: any) => api.put(`/clients/${id}`, updated),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['client-details', id] });
+      queryClient.invalidateQueries({ queryKey: ['admin-clients'] });
+      setShowEditModal(false);
+      setFormError(null);
+    },
+    onError: (err: any) => {
+      setFormError(err.message || 'Failed to update client');
+    },
+  });
+
+  const handleOpenEdit = () => {
+    if (!client) return;
+    const initialDate = client.startDate || client.createdAt;
+    setEditFormData({
+      clientName: client.clientName,
+      businessName: client.businessName,
+      phone: client.phone,
+      email: client.email,
+      startDate: initialDate ? new Date(initialDate).toISOString().split('T')[0] : '',
+      status: client.status,
+    });
+    setFormError(null);
+    setShowEditModal(true);
+  };
+
+  const handleEditSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
+    updateClientMutation.mutate({
+      clientName: editFormData.clientName,
+      businessName: editFormData.businessName,
+      phone: editFormData.phone,
+      email: editFormData.email,
+      status: editFormData.status,
+      startDate: editFormData.startDate ? new Date(editFormData.startDate).toISOString() : undefined,
+      createdAt: editFormData.startDate ? new Date(editFormData.startDate).toISOString() : undefined,
+    });
+  };
+
   return (
     <div className="space-y-6 pb-12">
-      {/* Back Button */}
-      <button
-        onClick={() => window.history.back()}
-        className="flex items-center gap-1.5 text-xs text-charcoal-600 hover:text-charcoal-900 font-semibold transition-colors"
-      >
-        <ArrowLeft size={14} /> Back to Directory
-      </button>
+      {/* Back Button & Action Controls */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => window.history.back()}
+          className="flex items-center gap-1.5 text-xs text-charcoal-600 hover:text-charcoal-900 font-semibold transition-colors cursor-pointer"
+        >
+          <ArrowLeft size={14} /> Back to Directory
+        </button>
+
+        {isSuperAdmin && (
+          <button
+            onClick={handleOpenEdit}
+            className="px-3.5 py-1.5 bg-cream-200 hover:bg-cream-300 text-charcoal-800 text-xs font-semibold rounded-lg border border-cream-300 flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+          >
+            <Edit3 size={13} /> Edit Client / Date
+          </button>
+        )}
+      </div>
 
       {/* Client Summary Header */}
       <div className="cream-card p-6 flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -153,8 +224,10 @@ export const ClientDetailsPage: React.FC = () => {
                 <span className="text-charcoal-900 font-semibold">{client.paymentTerms || 'Standard Terms'}</span>
               </div>
               <div>
-                <span className="text-charcoal-600">Onboarded:</span>{' '}
-                <span className="text-charcoal-900 font-semibold">{formatDate(client.createdAt)}</span>
+                <span className="text-charcoal-600">Onboarded / Joined:</span>{' '}
+                <span className="text-charcoal-900 font-semibold">
+                  {formatDate(client.startDate || client.createdAt)}
+                </span>
               </div>
             </div>
           </div>
@@ -248,6 +321,129 @@ export const ClientDetailsPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Edit Client Date & Details Modal (Admin Only) */}
+      {showEditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="cream-card p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl border-2 border-cream-300">
+            <div className="flex items-center justify-between pb-4 border-b border-cream-300">
+              <div>
+                <h2 className="text-base font-bold text-charcoal-900">Edit Client Date & Profile</h2>
+                <p className="text-xs text-charcoal-600">Update joining date, contact details or account status</p>
+              </div>
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="text-charcoal-500 hover:text-charcoal-900 p-1 rounded-lg hover:bg-cream-200 transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {formError && (
+              <div className="mt-4 p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-700 text-xs flex items-center gap-2">
+                <AlertCircle size={16} /> {formError}
+              </div>
+            )}
+
+            <form onSubmit={handleEditSubmit} className="space-y-4 mt-4 text-xs">
+              <div>
+                <label className="block text-xs font-semibold text-charcoal-800 mb-1 flex items-center gap-1.5">
+                  <Calendar size={13} className="text-[#991B1B]" />
+                  <span>Joining / Onboarding Date (Manual Date) *</span>
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={editFormData.startDate}
+                  onChange={(e) => setEditFormData({ ...editFormData, startDate: e.target.value })}
+                  className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                />
+                <p className="text-[10px] text-charcoal-500 mt-1">
+                  Yahan se aap kisi bhi purane client ki actual joining date set kar sakte hain
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-charcoal-800 mb-1">Client Contact Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={editFormData.clientName}
+                  onChange={(e) => setEditFormData({ ...editFormData, clientName: e.target.value })}
+                  className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-charcoal-800 mb-1">Business Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={editFormData.businessName}
+                  onChange={(e) => setEditFormData({ ...editFormData, businessName: e.target.value })}
+                  className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-charcoal-800 mb-1">Phone Number *</label>
+                  <input
+                    type="tel"
+                    required
+                    value={editFormData.phone}
+                    onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })}
+                    className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-charcoal-800 mb-1">Email Address *</label>
+                  <input
+                    type="email"
+                    required
+                    value={editFormData.email}
+                    onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                    className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-charcoal-800 mb-1">Account Status</label>
+                <select
+                  value={editFormData.status}
+                  onChange={(e) => setEditFormData({ ...editFormData, status: e.target.value as ClientStatus })}
+                  className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                >
+                  {CLIENT_STATUSES.map((st) => (
+                    <option key={st} value={st}>
+                      {st}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="pt-4 border-t border-cream-300 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(false)}
+                  className="px-4 py-2 bg-cream-200 hover:bg-cream-300 text-charcoal-800 text-xs font-semibold rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={updateClientMutation.isPending}
+                  className="px-5 py-2 bg-[#991B1B] hover:bg-[#7F1D1D] disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow-md shadow-red-900/20 cursor-pointer"
+                >
+                  {updateClientMutation.isPending ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

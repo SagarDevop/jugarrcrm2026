@@ -84,6 +84,10 @@ export class ClientController {
       const advance = Number(data.advancePayment || 0);
       const remainingBalance = Math.max(0, totalContract - (token + advance));
 
+      // Manual date for past or new clients
+      const manualDate = data.startDate || data.createdAt;
+      const parsedDate = manualDate ? new Date(manualDate) : new Date();
+
       const client = await ClientModel.create({
         ...data,
         organizationId: user.organizationId,
@@ -93,6 +97,8 @@ export class ClientController {
         advancePayment: advance,
         remainingBalance,
         assignedSalesMember: data.assignedSalesMember || user._id,
+        startDate: parsedDate,
+        createdAt: parsedDate,
         createdBy: user._id,
       });
 
@@ -179,6 +185,13 @@ export class ClientController {
       }
 
       Object.assign(client, req.body);
+
+      if (req.body.startDate || req.body.createdAt) {
+        const updatedDate = new Date(req.body.startDate || req.body.createdAt);
+        client.startDate = updatedDate;
+        client.createdAt = updatedDate;
+      }
+
       await client.save();
 
       const populated = await ClientModel.findById(client._id)

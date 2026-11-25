@@ -4,7 +4,7 @@ import { NavLink } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { Client, CLIENT_STATUSES, ClientStatus } from '@agencyos/shared';
 import { formatCurrency, formatDate } from '../../lib/utils';
-import { Users, Plus, Search, Phone, Mail, Building, Eye, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Users, Plus, Search, Phone, Mail, Building, Eye, AlertCircle, CheckCircle2, Calendar } from 'lucide-react';
 
 export const AdminClientsPage: React.FC = () => {
   const queryClient = useQueryClient();
@@ -28,6 +28,7 @@ export const AdminClientsPage: React.FC = () => {
     advancePayment: 0,
     paymentTerms: 'Standard (50% Advance, 50% on Delivery)',
     status: 'Active' as ClientStatus,
+    startDate: new Date().toISOString().split('T')[0],
   });
 
   const { data: clients, isLoading } = useQuery<Client[]>({
@@ -61,6 +62,7 @@ export const AdminClientsPage: React.FC = () => {
         advancePayment: 0,
         paymentTerms: 'Standard',
         status: 'Active',
+        startDate: new Date().toISOString().split('T')[0],
       });
     },
     onError: (err: any) => {
@@ -76,6 +78,8 @@ export const AdminClientsPage: React.FC = () => {
       totalContractAmount: Number(formData.totalContractAmount),
       initialToken: Number(formData.initialToken),
       advancePayment: Number(formData.advancePayment),
+      startDate: formData.startDate ? new Date(formData.startDate).toISOString() : new Date().toISOString(),
+      createdAt: formData.startDate ? new Date(formData.startDate).toISOString() : new Date().toISOString(),
     });
   };
 
@@ -158,6 +162,10 @@ export const AdminClientsPage: React.FC = () => {
                       <div className="font-bold text-charcoal-900">{client.clientName}</div>
                       <div className="text-[11px] text-charcoal-600 flex items-center gap-1 mt-0.5">
                         <Building size={12} className="text-charcoal-400" /> {client.businessName}
+                      </div>
+                      <div className="text-[10px] text-charcoal-500 flex items-center gap-1 mt-1 font-medium">
+                        <Calendar size={11} className="text-charcoal-400" /> Joined:{' '}
+                        {formatDate(client.startDate || client.createdAt)}
                       </div>
                     </td>
                     <td className="py-3.5 px-4">
@@ -350,6 +358,23 @@ export const AdminClientsPage: React.FC = () => {
                     onChange={(e) => setFormData({ ...formData, advancePayment: Number(e.target.value) })}
                     className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-charcoal-800 mb-1 flex items-center gap-1">
+                    <Calendar size={13} className="text-[#991B1B]" />
+                    <span>Joining / Onboarding Date *</span>
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={formData.startDate}
+                    onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                    className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                  />
+                  <p className="text-[10px] text-charcoal-500 mt-1">
+                    Purane clients ke liye unka actual onboarding/joining date daalein
+                  </p>
                 </div>
 
                 <div>

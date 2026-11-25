@@ -86,6 +86,7 @@ export const createClientSchema = z.object({
   selectedPackage: z.string().optional(),
   customQuotation: z.number().min(0).optional(),
   startDate: z.string().optional(),
+  createdAt: z.string().optional(),
   expectedDeliveryDate: z.string().optional(),
   assignedProjectManager: z.string().optional(),
   assignedSalesMember: z.string().optional(),
@@ -151,6 +152,7 @@ export const createProjectSchema = z.object({
   }).default({}),
   assignedMembers: z.array(z.string()).default([]),
   startDate: z.string().optional(),
+  createdAt: z.string().optional(),
   targetDeliveryDate: z.string().optional(),
 });
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
