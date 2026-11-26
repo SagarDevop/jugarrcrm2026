@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
   Users,
@@ -21,6 +21,9 @@ import {
   FileText,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
+import { useChatStore } from '../stores/chatStore';
+import { getSocket } from '../lib/socket';
+import { api } from '../lib/api';
 
 const navigationItems = [
   { name: 'Executive Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
@@ -42,7 +45,45 @@ const navigationItems = [
 export const AdminLayout: React.FC = () => {
   const [collapsed, setCollapsed] = useState(false);
   const { user, organization, logout } = useAuthStore();
+  const { hasUnread, setUnreadCount, setHasUnread, markAsRead } = useChatStore();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // If currently viewing chat, mark unread as cleared
+  useEffect(() => {
+    if (location.pathname.includes('/chat')) {
+      markAsRead();
+    }
+  }, [location.pathname, markAsRead]);
+
+  // Fetch initial unread count on mount
+  useEffect(() => {
+    api
+      .get('/chat/unread-count')
+      .then((res: any) => {
+        if (res && typeof res.unreadCount === 'number') {
+          setUnreadCount(res.unreadCount);
+        }
+      })
+      .catch(() => {});
+  }, [setUnreadCount]);
+
+  // Global socket listener: if a new message arrives and user is elsewhere, show notification white dot
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    const handleGlobalMessage = (payload: { roomId: string; message: any }) => {
+      if (!location.pathname.includes('/chat') && payload.message?.senderId !== user?._id) {
+        setHasUnread(true);
+      }
+    };
+
+    socket.on('chat:message', handleGlobalMessage);
+    return () => {
+      socket.off('chat:message', handleGlobalMessage);
+    };
+  }, [location.pathname, user?._id, setHasUnread]);
 
   const handleLogout = async () => {
     await logout();
@@ -87,23 +128,51 @@ export const AdminLayout: React.FC = () => {
 
         {/* Navigation list */}
         <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-          {navigationItems.map((item) => (
-            <NavLink
-              key={item.href}
-              to={item.href}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                  isActive
-                    ? 'bg-[#991B1B] text-white shadow-md shadow-red-900/30 font-bold'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/70'
-                } ${collapsed ? 'justify-center px-0' : ''}`
-              }
-              title={collapsed ? item.name : undefined}
-            >
-              <item.icon size={17} className="shrink-0" />
-              {!collapsed && <span className="truncate">{item.name}</span>}
-            </NavLink>
-          ))}
+          {navigationItems.map((item) => {
+            const isChat = item.href.includes('/chat');
+            const showUnreadDot = isChat && hasUnread;
+
+            return (
+              <NavLink
+                key={item.href}
+                to={item.href}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all relative ${
+                    isActive
+                      ? 'bg-[#991B1B] text-white shadow-md shadow-red-900/30 font-bold'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/70'
+                  } ${collapsed ? 'justify-center px-0' : ''}`
+                }
+                title={collapsed ? item.name : undefined}
+              >
+                <div className="relative shrink-0">
+                  <item.icon size={17} />
+                  {/* White notification dot when sidebar is collapsed */}
+                  {collapsed && showUnreadDot && (
+                    <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-85" />
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white shadow-sm shadow-white/80" />
+                    </span>
+                  )}
+                </div>
+
+                {!collapsed && (
+                  <>
+                    <span className="truncate flex-1">{item.name}</span>
+                    {/* White notification dot when sidebar is expanded */}
+                    {showUnreadDot && (
+                      <span className="flex items-center gap-1.5 ml-auto shrink-0" title="New unread message in Live Chat">
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-90" />
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-white shadow-xs shadow-white/90" />
+                        </span>
+                      </span>
+                    )}
+                  </>
+                )}
+              </NavLink>
+            );
+          })}
         </nav>
 
         {/* Footer info */}

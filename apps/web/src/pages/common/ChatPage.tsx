@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { getSocket } from '../../lib/socket';
 import { useAuthStore } from '../../stores/authStore';
+import { useChatStore } from '../../stores/chatStore';
 import { ChatRoom, ChatMessage, User } from '@agencyos/shared';
 import {
   MessageSquare,
@@ -25,6 +26,7 @@ const QUICK_REACTIONS = ['🔥', '🚀', '💰', '🎉', '👍', '👏', '🤝',
 
 export const ChatPage: React.FC = () => {
   const { user } = useAuthStore();
+  const { markAsRead } = useChatStore();
   const queryClient = useQueryClient();
 
   const isSuperAdmin = user?.role === 'SUPER_ADMIN';
@@ -35,6 +37,39 @@ export const ChatPage: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDeleteRoomConfirm, setShowDeleteRoomConfirm] = useState(false);
   const [selectedMessageForInfo, setSelectedMessageForInfo] = useState<ChatMessage | null>(null);
+
+  // Real-time typing indicators state
+  const [typingUsers, setTypingUsers] = useState<Record<string, { userName: string; timestamp: number }>>({});
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear unread notification badge whenever ChatPage is mounted
+  useEffect(() => {
+    markAsRead();
+  }, [markAsRead]);
+
+  // Clean up stale typing indicators older than 3.5s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setTypingUsers((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [id, data] of Object.entries(next)) {
+          if (now - data.timestamp > 3500) {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 1500);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Clear typers on active room switch
+  useEffect(() => {
+    setTypingUsers({});
+  }, [activeRoomId]);
 
   // New Group Form state
   const [groupName, setGroupName] = useState('');
@@ -161,16 +196,37 @@ export const ChatPage: React.FC = () => {
       }
     };
 
+    const handleUserTyping = (payload: {
+      roomId: string;
+      userId: string;
+      userName: string;
+      isTyping: boolean;
+    }) => {
+      if (payload.roomId !== activeRoomId || payload.userId === user?._id) return;
+
+      setTypingUsers((prev) => {
+        const next = { ...prev };
+        if (payload.isTyping) {
+          next[payload.userId] = { userName: payload.userName, timestamp: Date.now() };
+        } else {
+          delete next[payload.userId];
+        }
+        return next;
+      });
+    };
+
     socket.on('chat:message', handleNewMessage);
     socket.on('chat:messages_read', handleMessagesRead);
     socket.on('chat:room_created', handleRoomCreated);
     socket.on('chat:room_deleted', handleRoomDeleted);
+    socket.on('chat:user_typing', handleUserTyping);
 
     return () => {
       socket.off('chat:message', handleNewMessage);
       socket.off('chat:messages_read', handleMessagesRead);
       socket.off('chat:room_created', handleRoomCreated);
       socket.off('chat:room_deleted', handleRoomDeleted);
+      socket.off('chat:user_typing', handleUserTyping);
     };
   }, [activeRoomId, queryClient, user?._id]);
 
@@ -233,9 +289,43 @@ export const ChatPage: React.FC = () => {
     sendMutation.mutate({ message: trimmed, tempId });
   };
 
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setMessageText(val);
+
+    const socket = getSocket();
+    if (!socket || !activeRoomId || !user) return;
+
+    socket.emit('chat:typing', {
+      roomId: activeRoomId,
+      userName: user.name,
+      isTyping: true,
+    });
+
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      socket.emit('chat:typing', {
+        roomId: activeRoomId,
+        userName: user.name,
+        isTyping: false,
+      });
+    }, 2500);
+  };
+
   const handleSendMessage = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!messageText.trim() || !activeRoomId) return;
+
+    // Immediately stop typing indicator for this user
+    const socket = getSocket();
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    if (socket && activeRoomId && user) {
+      socket.emit('chat:typing', {
+        roomId: activeRoomId,
+        userName: user.name,
+        isTyping: false,
+      });
+    }
 
     const text = messageText;
     setMessageText(''); // Clear input instantly!
@@ -609,6 +699,23 @@ export const ChatPage: React.FC = () => {
               ))}
             </div>
 
+            {/* Real-time Typing Indicator ("Sagar is typing...") */}
+            {Object.values(typingUsers).length > 0 && (
+              <div className="px-6 py-2 bg-[#FAF9F5] border-t border-cream-300 flex items-center gap-2 text-xs text-charcoal-700 animate-fadeIn transition-all">
+                <div className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#991B1B] animate-bounce [animation-delay:-0.3s]" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#991B1B] animate-bounce [animation-delay:-0.15s]" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#991B1B] animate-bounce" />
+                </div>
+                <span className="font-bold text-charcoal-900">
+                  {Object.values(typingUsers).map((t) => t.userName).join(', ')}
+                </span>
+                <span className="text-charcoal-500 font-medium italic">
+                  {Object.values(typingUsers).length === 1 ? 'is typing...' : 'are typing...'}
+                </span>
+              </div>
+            )}
+
             {/* Input Composer Bar */}
             <form
               onSubmit={handleSendMessage}
@@ -617,7 +724,7 @@ export const ChatPage: React.FC = () => {
               <input
                 type="text"
                 value={messageText}
-                onChange={(e) => setMessageText(e.target.value)}
+                onChange={handleInputChange}
                 placeholder={`Message #${activeRoom.name}... (Press Enter to send instantly)`}
                 className="flex-1 bg-[#F5F6F8] border border-slate-200 rounded-xl px-4 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#991B1B]"
               />

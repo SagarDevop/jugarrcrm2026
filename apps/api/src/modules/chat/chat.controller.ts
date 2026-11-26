@@ -250,4 +250,19 @@ export class ChatController {
       next(err);
     }
   }
+
+  static async getUnreadCount(req: Request, res: Response, next: NextFunction) {
+    try {
+      const user = req.user!;
+      const unreadCount = await ChatMessageModel.countDocuments({
+        organizationId: user.organizationId,
+        senderId: { $ne: user._id },
+        'readBy.userId': { $ne: user._id },
+      });
+
+      return ApiResponse.success(res, { unreadCount });
+    } catch (err) {
+      next(err);
+    }
+  }
 }

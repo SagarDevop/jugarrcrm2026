@@ -38,6 +38,18 @@ export const initSocketIO = (io: SocketIOServer) => {
       socket.join(`user:${userId}`);
     }
 
+    // Real-Time Chat Typing Indicator
+    socket.on('chat:typing', (data: { roomId: string; userName?: string; isTyping: boolean }) => {
+      if (organizationId && data?.roomId) {
+        socket.to(`org:${organizationId}`).emit('chat:user_typing', {
+          roomId: data.roomId,
+          userId,
+          userName: data.userName || 'Team member',
+          isTyping: Boolean(data.isTyping),
+        });
+      }
+    });
+
     socket.on('disconnect', () => {
       logger.info(`[Socket.IO] Client disconnected: ${socket.id}`);
     });

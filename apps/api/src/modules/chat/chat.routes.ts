@@ -7,6 +7,7 @@ const router = Router();
 router.use(authenticate);
 
 router.get('/rooms', ChatController.listRooms);
+router.get('/unread-count', ChatController.getUnreadCount);
 router.post('/rooms', ChatController.createRoom);
 router.delete('/rooms/:roomId', ChatController.deleteRoom);
 router.get('/rooms/:roomId/messages', ChatController.listMessages);
