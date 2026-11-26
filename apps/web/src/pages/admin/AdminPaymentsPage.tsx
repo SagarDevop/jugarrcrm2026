@@ -11,12 +11,18 @@ import {
   AlertCircle,
   ShieldCheck,
   Building,
+  Trash2,
+  Mail,
+  Check,
+  Loader2,
 } from 'lucide-react';
 
 export const AdminPaymentsPage: React.FC = () => {
   const queryClient = useQueryClient();
   const [showAddModal, setShowAddModal] = useState(false);
   const [filterStatus, setFilterStatus] = useState('');
+  const [paymentToDelete, setPaymentToDelete] = useState<Payment | null>(null);
+  const [sentReceipts, setSentReceipts] = useState<Record<string, boolean>>({});
 
   const [formData, setFormData] = useState({
     clientId: '',
@@ -56,6 +62,33 @@ export const AdminPaymentsPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['admin-payments'] });
       queryClient.invalidateQueries({ queryKey: ['admin-finance-overview'] });
       queryClient.invalidateQueries({ queryKey: ['admin-clients'] });
+    },
+  });
+
+  const deletePaymentMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/payments/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-payments'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-finance-overview'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-clients'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-retainers'] });
+      setPaymentToDelete(null);
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.error || err?.message || 'Failed to delete payment');
+    },
+  });
+
+  const sendReceiptMutation = useMutation({
+    mutationFn: (paymentId: string) => api.post(`/emails/send-payment-receipt/${paymentId}`),
+    onSuccess: (_, paymentId) => {
+      setSentReceipts((prev) => ({ ...prev, [paymentId]: true }));
+      setTimeout(() => {
+        setSentReceipts((prev) => ({ ...prev, [paymentId]: false }));
+      }, 4000);
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.error || err?.message || 'Failed to send receipt email via Brevo');
     },
   });
 
@@ -161,26 +194,57 @@ export const AdminPaymentsPage: React.FC = () => {
                       </span>
                     </td>
                     <td className="py-3.5 px-4 text-right">
-                      {pmt.status === 'Pending' ? (
-                        <div className="inline-flex items-center gap-1.5">
-                          <button
-                            onClick={() => verifyPaymentMutation.mutate({ id: pmt._id, status: 'Verified' })}
-                            className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-xs font-semibold flex items-center gap-1 shadow-xs"
-                          >
-                            <CheckCircle2 size={12} /> Verify
-                          </button>
-                          <button
-                            onClick={() => verifyPaymentMutation.mutate({ id: pmt._id, status: 'Rejected' })}
-                            className="px-2.5 py-1 bg-cream-200 hover:bg-rose-50 text-rose-700 border border-rose-200 rounded text-xs font-semibold"
-                          >
-                            Reject
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="text-[11px] text-charcoal-500 font-medium">
-                          Verified by {(pmt.verifiedBy as any)?.name || 'Super Admin'}
-                        </span>
-                      )}
+                      <div className="inline-flex items-center justify-end gap-2">
+                        {pmt.status === 'Pending' ? (
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              onClick={() => verifyPaymentMutation.mutate({ id: pmt._id, status: 'Verified' })}
+                              className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-xs font-semibold flex items-center gap-1 shadow-xs cursor-pointer"
+                            >
+                              <CheckCircle2 size={12} /> Verify
+                            </button>
+                            <button
+                              onClick={() => verifyPaymentMutation.mutate({ id: pmt._id, status: 'Rejected' })}
+                              className="px-2.5 py-1 bg-cream-200 hover:bg-rose-50 text-rose-700 border border-rose-200 rounded text-xs font-semibold cursor-pointer"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        ) : pmt.status === 'Verified' ? (
+                          <div className="inline-flex items-center gap-2">
+                            {sentReceipts[pmt._id] ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                                <Check size={11} /> Receipt Sent
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={sendReceiptMutation.isPending}
+                                onClick={() => sendReceiptMutation.mutate(pmt._id)}
+                                className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                                title="Send Brevo Email Receipt to Client"
+                              >
+                                {sendReceiptMutation.isPending && (sendReceiptMutation.variables === pmt._id) ? (
+                                  <Loader2 size={11} className="animate-spin" />
+                                ) : (
+                                  <Mail size={12} />
+                                )}
+                                <span>Email Receipt</span>
+                              </button>
+                            )}
+                          </div>
+                        ) : null}
+
+                        {/* Delete Payment Button */}
+                        <button
+                          type="button"
+                          onClick={() => setPaymentToDelete(pmt)}
+                          className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-rose-200"
+                          title="Delete this payment record & revert balance"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -292,6 +356,59 @@ export const AdminPaymentsPage: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Payment Confirmation Modal */}
+      {paymentToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="cream-card p-6 max-w-sm w-full text-xs shadow-2xl border-2 border-rose-300 space-y-4">
+            <div className="flex items-center gap-2 text-rose-700 font-bold text-sm">
+              <AlertCircle size={18} />
+              <span>Delete Payment Record?</span>
+            </div>
+
+            <p className="text-charcoal-700 leading-relaxed">
+              Kya aap sach me ye transaction record delete karna chahte hain?
+            </p>
+
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-charcoal-600">Amount:</span>
+                <span className="font-extrabold text-charcoal-900">{formatCurrency(paymentToDelete.amount)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-charcoal-600">Client:</span>
+                <span className="font-semibold text-charcoal-800">{(paymentToDelete.clientId as any)?.clientName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-charcoal-600">Ref / UTR:</span>
+                <span className="font-mono text-charcoal-700">{paymentToDelete.transactionReference}</span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-charcoal-500 italic">
+              * Note: Is payment ko delete karne par client ka remaining balance aur period calculation automatically revert ho jayega.
+            </p>
+
+            <div className="pt-2 flex justify-end gap-2 border-t border-cream-300">
+              <button
+                type="button"
+                onClick={() => setPaymentToDelete(null)}
+                className="px-3.5 py-1.5 bg-cream-200 hover:bg-cream-300 text-charcoal-800 rounded-lg font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deletePaymentMutation.isPending}
+                onClick={() => deletePaymentMutation.mutate(paymentToDelete._id)}
+                className="px-4 py-1.5 bg-rose-700 hover:bg-rose-800 disabled:opacity-50 text-white rounded-lg font-semibold shadow-md shadow-rose-900/20 cursor-pointer flex items-center gap-1.5"
+              >
+                {deletePaymentMutation.isPending ? 'Deleting...' : 'Yes, Delete Payment'}
+              </button>
+            </div>
           </div>
         </div>
       )}

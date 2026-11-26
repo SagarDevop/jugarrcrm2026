@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { PaymentModel } from '../../models/payment.model';
 import { ClientModel } from '../../models/client.model';
 import { ProjectModel } from '../../models/project.model';
+import { RetainerModel } from '../../models/retainer.model';
 import { CommissionModel } from '../../models/commission.model';
 import { UserModel } from '../../models/user.model';
 import { ActivityEventModel } from '../../models/activityEvent.model';
@@ -152,6 +153,79 @@ export class PaymentController {
       emitOrgEvent(user.organizationId, 'payment:updated', populated);
 
       return ApiResponse.success(res, populated, `Payment status updated to ${status}`);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async deletePayment(req: Request, res: Response, next: NextFunction) {
+    try {
+      const user = req.user!;
+      const { id } = req.params;
+
+      const payment = await PaymentModel.findOne({ _id: id, organizationId: user.organizationId });
+      if (!payment) throw new AppError('Payment not found.', 404);
+
+      // If the payment was Verified, revert balances
+      if (payment.status === 'Verified') {
+        // 1. Revert client remaining balance
+        const client = await ClientModel.findOne({ _id: payment.clientId, organizationId: user.organizationId });
+        if (client) {
+          client.remainingBalance = (client.remainingBalance || 0) + payment.amount;
+          await client.save();
+        }
+
+        // 2. Revert project balances if linked
+        if (payment.projectId) {
+          const project = await ProjectModel.findOne({ _id: payment.projectId, organizationId: user.organizationId });
+          if (project) {
+            project.paidAmount = Math.max(0, project.paidAmount - payment.amount);
+            project.remainingAmount = Math.max(0, project.totalAmount - project.paidAmount);
+            await project.save();
+          }
+        }
+
+        // 3. Revert retainer balances if linked
+        if (payment.retainerId) {
+          const retainer = await RetainerModel.findOne({ _id: payment.retainerId, organizationId: user.organizationId });
+          if (retainer) {
+            if (retainer.currentPeriod) {
+              retainer.currentPeriod.tokenAmount = Math.max(0, (retainer.currentPeriod.tokenAmount || 0) - payment.amount);
+              retainer.currentPeriod.pendingBalance = Math.max(0, retainer.currentPeriod.monthlyFee - retainer.currentPeriod.tokenAmount);
+              retainer.currentPeriod.billingStatus =
+                retainer.currentPeriod.pendingBalance === 0
+                  ? 'Paid'
+                  : retainer.currentPeriod.tokenAmount > 0
+                  ? 'Invoiced'
+                  : 'Pending';
+              retainer.markModified('currentPeriod');
+            }
+            await retainer.save();
+          }
+        }
+
+        // 4. Delete commission record if calculated
+        await CommissionModel.findOneAndDelete({ paymentId: payment._id });
+      }
+
+      // Delete payment record
+      await PaymentModel.findByIdAndDelete(payment._id);
+
+      await logAudit({
+        organizationId: user.organizationId,
+        userId: user._id,
+        userEmail: user.email,
+        action: 'PAYMENT_DELETED',
+        entityType: 'Payment',
+        entityId: payment._id.toString(),
+        changes: { amount: payment.amount, client: payment.clientId, transactionReference: payment.transactionReference },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
+      emitOrgEvent(user.organizationId, 'payment:deleted', { _id: payment._id });
+
+      return ApiResponse.success(res, { _id: payment._id }, 'Payment deleted successfully and balances reverted.');
     } catch (error) {
       next(error);
     }

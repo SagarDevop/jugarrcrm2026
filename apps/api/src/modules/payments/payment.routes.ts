@@ -22,5 +22,10 @@ router.post(
   validateRequest(verifyPaymentSchema),
   PaymentController.verifyPayment
 );
+router.delete(
+  '/:id',
+  requirePermission(PERMISSIONS.PAYMENTS_DELETE),
+  PaymentController.deletePayment
+);
 
 export default router;

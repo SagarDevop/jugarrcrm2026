@@ -40,6 +40,7 @@ export const PERMISSIONS = {
   PAYMENTS_VIEW: 'payments.view',
   PAYMENTS_CREATE: 'payments.create',
   PAYMENTS_VERIFY: 'payments.verify',
+  PAYMENTS_DELETE: 'payments.delete',
   EXPENSES_VIEW: 'expenses.view',
   EXPENSES_CREATE: 'expenses.create',
   EXPENSES_APPROVE: 'expenses.approve',

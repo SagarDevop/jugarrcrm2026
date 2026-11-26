@@ -26,6 +26,7 @@ import notificationRoutes from './modules/notifications/notification.routes';
 import auditRoutes from './modules/audit/audit.routes';
 import catalogRoutes from './modules/catalog/catalog.routes';
 import chatRoutes from './modules/chat/chat.routes';
+import emailRoutes from './modules/email/email.routes';
 
 export const createApp = (): Application => {
   const app = express();
@@ -99,6 +100,7 @@ export const createApp = (): Application => {
   app.use('/api/audit', auditRoutes);
   app.use('/api/catalog', catalogRoutes);
   app.use('/api/chat', chatRoutes);
+  app.use('/api/emails', emailRoutes);
 
   // Centralized Error Handler
   app.use(errorHandler);

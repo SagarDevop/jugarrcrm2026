@@ -26,6 +26,10 @@ import {
   Plus,
   RefreshCw,
   History,
+  Trash2,
+  Send,
+  Check,
+  Loader2,
 } from 'lucide-react';
 
 export const ClientDetailsPage: React.FC = () => {
@@ -169,6 +173,54 @@ export const ClientDetailsPage: React.FC = () => {
     },
   });
 
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [emailForm, setEmailForm] = useState({
+    subject: '',
+    message: '',
+    emailType: 'custom' as 'custom' | 'reminder',
+  });
+  const [emailSuccessMsg, setEmailSuccessMsg] = useState<string | null>(null);
+  const [paymentToDelete, setPaymentToDelete] = useState<Payment | null>(null);
+  const [sentReceipts, setSentReceipts] = useState<Record<string, boolean>>({});
+
+  const sendEmailMutation = useMutation({
+    mutationFn: (emailPayload: any) => api.post('/emails/send-client', emailPayload),
+    onSuccess: () => {
+      setEmailSuccessMsg('Email delivered successfully via Brevo!');
+      setTimeout(() => {
+        setShowEmailModal(false);
+        setEmailSuccessMsg(null);
+      }, 2500);
+    },
+  });
+
+  const deletePaymentMutation = useMutation({
+    mutationFn: (paymentId: string) => api.delete(`/payments/${paymentId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['client-details', id] });
+      queryClient.invalidateQueries({ queryKey: ['admin-finance-overview'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-retainers'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-clients'] });
+      setPaymentToDelete(null);
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.error || err?.message || 'Failed to delete payment');
+    },
+  });
+
+  const sendReceiptMutation = useMutation({
+    mutationFn: (paymentId: string) => api.post(`/emails/send-payment-receipt/${paymentId}`),
+    onSuccess: (_, paymentId) => {
+      setSentReceipts((prev) => ({ ...prev, [paymentId]: true }));
+      setTimeout(() => {
+        setSentReceipts((prev) => ({ ...prev, [paymentId]: false }));
+      }, 4000);
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.error || err?.message || 'Failed to send receipt email via Brevo');
+    },
+  });
+
   if (isError) {
     return (
       <div className="p-8 text-center bg-white border border-rose-200 rounded-2xl max-w-lg mx-auto mt-12 space-y-4 shadow-sm">
@@ -250,14 +302,32 @@ export const ClientDetailsPage: React.FC = () => {
           <ArrowLeft size={14} /> Back to Directory
         </button>
 
-        {isSuperAdmin && (
-          <button
-            onClick={handleOpenEdit}
-            className="px-3.5 py-1.5 bg-cream-200 hover:bg-cream-300 text-charcoal-800 text-xs font-semibold rounded-lg border border-cream-300 flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-          >
-            <Edit3 size={13} /> Edit Client / Date
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {client.email && (
+            <button
+              onClick={() => {
+                setEmailForm({
+                  subject: `Update regarding ${client.businessName} - Jugarr Technologies`,
+                  message: `Hello ${client.clientName},\n\nHere is an update regarding your account with Jugarr Technologies.\n\nBest regards,\nSagar`,
+                  emailType: 'custom',
+                });
+                setShowEmailModal(true);
+              }}
+              className="px-3.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-800 text-xs font-semibold rounded-lg border border-blue-200 flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            >
+              <Mail size={13} className="text-blue-700" /> Send Email (Brevo)
+            </button>
+          )}
+
+          {isSuperAdmin && (
+            <button
+              onClick={handleOpenEdit}
+              className="px-3.5 py-1.5 bg-cream-200 hover:bg-cream-300 text-charcoal-800 text-xs font-semibold rounded-lg border border-cream-300 flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            >
+              <Edit3 size={13} /> Edit Client / Date
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Client Summary Header */}
@@ -735,11 +805,47 @@ export const ClientDetailsPage: React.FC = () => {
                       <span className="font-bold text-charcoal-900">{formatCurrency(pmt.amount)}</span>
                       <span className="text-[11px] text-charcoal-600 ml-2">({pmt.category} - {pmt.paymentMethod})</span>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                       <span className="text-[10px] text-charcoal-500">{formatDate(pmt.paymentDate)}</span>
                       <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300">
                         {pmt.status}
                       </span>
+
+                      {/* Email Receipt Button */}
+                      {pmt.status === 'Verified' && (
+                        sentReceipts[pmt._id] ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                            <Check size={10} /> Sent
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={sendReceiptMutation.isPending}
+                            onClick={() => sendReceiptMutation.mutate(pmt._id)}
+                            className="px-2 py-0.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                            title="Send Brevo Email Receipt to Client"
+                          >
+                            {sendReceiptMutation.isPending && (sendReceiptMutation.variables === pmt._id) ? (
+                              <Loader2 size={10} className="animate-spin" />
+                            ) : (
+                              <Mail size={10} />
+                            )}
+                            <span>Receipt</span>
+                          </button>
+                        )
+                      )}
+
+                      {/* Delete Payment Button */}
+                      {isSuperAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => setPaymentToDelete(pmt)}
+                          className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded transition-colors cursor-pointer"
+                          title="Delete payment record & revert balance"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1434,6 +1540,200 @@ export const ClientDetailsPage: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Send Email Modal (Brevo / Bravo API) */}
+      {showEmailModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="cream-card p-6 max-w-lg w-full text-xs shadow-2xl border-2 border-cream-300 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-cream-300">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
+                  <Mail size={15} />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-charcoal-900">Send Email to Client</h2>
+                  <p className="text-[11px] text-charcoal-600">Powered by Brevo (Bravo) Transactional Email API</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEmailModal(false)}
+                className="text-charcoal-500 hover:text-charcoal-900 p-1 rounded-lg hover:bg-cream-200"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {emailSuccessMsg && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 font-semibold flex items-center gap-2">
+                <CheckCircle2 size={16} /> {emailSuccessMsg}
+              </div>
+            )}
+
+            {sendEmailMutation.isError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 font-medium">
+                {(sendEmailMutation.error as any)?.response?.data?.error ||
+                  (sendEmailMutation.error as any)?.message ||
+                  'Failed to deliver email. Please check your BREVO_API_KEY.'}
+              </div>
+            )}
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                sendEmailMutation.mutate({
+                  clientId: client._id,
+                  subject: emailForm.subject,
+                  message: emailForm.message,
+                  emailType: emailForm.emailType,
+                });
+              }}
+              className="space-y-3"
+            >
+              <div className="p-2.5 bg-cream-100 rounded-lg border border-cream-300 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] text-charcoal-500 block uppercase font-bold">Recipient</span>
+                  <span className="font-bold text-charcoal-900">{client.clientName} ({client.businessName})</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-charcoal-500 block uppercase font-bold">Email</span>
+                  <span className="font-mono text-blue-700 font-semibold">{client.email}</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-charcoal-800 font-semibold mb-1">Email Type / Template</label>
+                <select
+                  value={emailForm.emailType}
+                  onChange={(e) => {
+                    const type = e.target.value as 'custom' | 'reminder';
+                    if (type === 'reminder') {
+                      setEmailForm({
+                        emailType: type,
+                        subject: `Monthly Retainer Billing Cycle Update - ${client.businessName} - Jugarr Technologies`,
+                        message: `Dear ${client.clientName},\n\nThis is a reminder regarding your current monthly retainer cycle. Please find the statement attached in this email.\n\nBest regards,\nSagar | Jugarr Technologies`,
+                      });
+                    } else {
+                      setEmailForm({
+                        emailType: type,
+                        subject: `Update regarding ${client.businessName} - Jugarr Technologies`,
+                        message: `Hello ${client.clientName},\n\nWe wanted to share an update with you regarding your ongoing deliverables and services.\n\nBest regards,\nSagar`,
+                      });
+                    }
+                  }}
+                  className="w-full bg-white border border-cream-300 rounded px-3 py-2 text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                >
+                  <option value="custom">Custom Client Message / Notice</option>
+                  <option value="reminder">Retainer Billing Cycle Reminder & Statement</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-charcoal-800 font-semibold mb-1">Subject Line *</label>
+                <input
+                  type="text"
+                  required
+                  value={emailForm.subject}
+                  onChange={(e) => setEmailForm({ ...emailForm, subject: e.target.value })}
+                  className="w-full bg-white border border-cream-300 rounded px-3 py-2 text-charcoal-900 focus:outline-none focus:border-charcoal-900 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="block text-charcoal-800 font-semibold mb-1">Email Message / Body *</label>
+                <textarea
+                  rows={5}
+                  required
+                  value={emailForm.message}
+                  onChange={(e) => setEmailForm({ ...emailForm, message: e.target.value })}
+                  className="w-full bg-white border border-cream-300 rounded px-3 py-2 text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                  placeholder="Enter your message here..."
+                />
+              </div>
+
+              <div className="pt-3 border-t border-cream-300 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEmailModal(false)}
+                  className="px-3.5 py-1.5 bg-cream-200 hover:bg-cream-300 text-charcoal-800 rounded-lg font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={sendEmailMutation.isPending || !emailForm.subject.trim()}
+                  className="px-5 py-1.5 bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white rounded-lg font-semibold shadow-md shadow-blue-900/20 cursor-pointer flex items-center gap-1.5"
+                >
+                  {sendEmailMutation.isPending ? (
+                    <>
+                      <Loader2 size={12} className="animate-spin" />
+                      <span>Sending via Brevo...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send size={12} />
+                      <span>Send Email Now</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Payment Confirmation Modal */}
+      {paymentToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="cream-card p-6 max-w-sm w-full text-xs shadow-2xl border-2 border-rose-300 space-y-4">
+            <div className="flex items-center gap-2 text-rose-700 font-bold text-sm">
+              <AlertCircle size={18} />
+              <span>Delete Payment Record?</span>
+            </div>
+
+            <p className="text-charcoal-700 leading-relaxed">
+              Kya aap sach me ye transaction record delete karna chahte hain?
+            </p>
+
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-charcoal-600">Amount:</span>
+                <span className="font-extrabold text-charcoal-900">{formatCurrency(paymentToDelete.amount)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-charcoal-600">Ref / UTR:</span>
+                <span className="font-mono text-charcoal-700">{paymentToDelete.transactionReference}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-charcoal-600">Category:</span>
+                <span className="font-semibold text-charcoal-800">{paymentToDelete.category}</span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-charcoal-500 italic">
+              * Note: Is payment ko delete karne par client ka remaining balance aur period calculation automatically revert ho jayega.
+            </p>
+
+            <div className="pt-2 flex justify-end gap-2 border-t border-cream-300">
+              <button
+                type="button"
+                onClick={() => setPaymentToDelete(null)}
+                className="px-3.5 py-1.5 bg-cream-200 hover:bg-cream-300 text-charcoal-800 rounded-lg font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deletePaymentMutation.isPending}
+                onClick={() => deletePaymentMutation.mutate(paymentToDelete._id)}
+                className="px-4 py-1.5 bg-rose-700 hover:bg-rose-800 disabled:opacity-50 text-white rounded-lg font-semibold shadow-md shadow-rose-900/20 cursor-pointer flex items-center gap-1.5"
+              >
+                {deletePaymentMutation.isPending ? 'Deleting...' : 'Yes, Delete Payment'}
+              </button>
+            </div>
           </div>
         </div>
       )}
