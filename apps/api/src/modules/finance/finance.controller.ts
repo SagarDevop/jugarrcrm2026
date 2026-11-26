@@ -261,6 +261,7 @@ export class FinanceController {
         .lean();
       const mrrBreakdown = activeRetainersList.map((r: any) => ({
         retainerId: r._id.toString(),
+        clientId: r.clientId?._id ? r.clientId._id.toString() : r.clientId?.toString() || '',
         clientName: r.clientId?.clientName || r.serviceName,
         businessName: r.clientId?.businessName || '',
         monthlyFee: r.monthlyFee,

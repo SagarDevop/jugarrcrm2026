@@ -378,6 +378,7 @@ export interface AdminDashboardKPIs {
   projectStatusDistribution: { status: string; count: number }[];
   mrrBreakdown?: {
     retainerId: string;
+    clientId?: string;
     clientName: string;
     businessName: string;
     monthlyFee: number;
