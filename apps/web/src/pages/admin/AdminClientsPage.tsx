@@ -143,7 +143,6 @@ export const AdminClientsPage: React.FC = () => {
                 <th className="py-3 px-4">Contact</th>
                 <th className="py-3 px-4">Service</th>
                 <th className="py-3 px-4">Contract Value</th>
-                <th className="py-3 px-4">Pending Balance</th>
                 <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
@@ -151,7 +150,7 @@ export const AdminClientsPage: React.FC = () => {
             <tbody className="divide-y divide-cream-300 bg-white">
               {isLoading ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-charcoal-500">
+                  <td colSpan={6} className="py-8 text-center text-charcoal-500">
                     Loading clients...
                   </td>
                 </tr>
@@ -186,15 +185,6 @@ export const AdminClientsPage: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-4">
                       <span
-                        className={`font-semibold ${
-                          client.remainingBalance > 0 ? 'text-amber-700' : 'text-emerald-700'
-                        }`}
-                      >
-                        {formatCurrency(client.remainingBalance)}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span
                         className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
                           client.status === 'Active'
                             ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
@@ -218,7 +208,7 @@ export const AdminClientsPage: React.FC = () => {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-charcoal-500">
+                  <td colSpan={6} className="py-12 text-center text-charcoal-500">
                     No clients found. Click "Register New Client" to add your first account.
                   </td>
                 </tr>
