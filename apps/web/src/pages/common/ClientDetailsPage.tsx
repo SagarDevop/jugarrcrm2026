@@ -1096,11 +1096,19 @@ export const ClientDetailsPage: React.FC = () => {
                     <option value="UPI">UPI</option>
                     <option value="Bank Transfer">Bank Transfer (NEFT/IMPS)</option>
                     <option value="Cash">Cash</option>
-                    <option value="Cheque">Cheque</option>
                     <option value="Credit Card">Credit Card</option>
+                    <option value="Stripe">Stripe</option>
                   </select>
                 </div>
               </div>
+
+              {recordPeriodPaymentMutation.isError && (
+                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs font-medium">
+                  {(recordPeriodPaymentMutation.error as any)?.message ||
+                    (recordPeriodPaymentMutation.error as any)?.response?.data?.error ||
+                    'Payment save karne me error aya. Kripya details verify karein.'}
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold text-charcoal-800 mb-1">Notes / Transaction Reference</label>
@@ -1231,7 +1239,16 @@ export const ClientDetailsPage: React.FC = () => {
                     <option value="Bank Transfer">Bank Transfer</option>
                     <option value="Cash">Cash</option>
                     <option value="Credit Card">Credit Card</option>
+                    <option value="Stripe">Stripe</option>
                   </select>
+                </div>
+              )}
+
+              {renewPeriodMutation.isError && (
+                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs font-medium">
+                  {(renewPeriodMutation.error as any)?.message ||
+                    (renewPeriodMutation.error as any)?.response?.data?.error ||
+                    'Next period renew karne me error aya.'}
                 </div>
               )}
 
@@ -1391,6 +1408,14 @@ export const ClientDetailsPage: React.FC = () => {
                   <option value="Overdue">Overdue</option>
                 </select>
               </div>
+
+              {updatePeriodMutation.isError && (
+                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs font-medium">
+                  {(updatePeriodMutation.error as any)?.message ||
+                    (updatePeriodMutation.error as any)?.response?.data?.error ||
+                    'Period adjust karne me error aya.'}
+                </div>
+              )}
 
               <div className="pt-4 border-t border-cream-300 flex items-center justify-end gap-3">
                 <button

@@ -150,13 +150,16 @@ export class RetainerController {
 
       // If advance was provided for next period, record payment in PaymentModel
       if (advance > 0) {
+        const validMethods = ['Bank Transfer', 'UPI', 'Credit Card', 'Cash', 'Stripe'];
+        const safePaymentMethod = validMethods.includes(req.body.paymentMethod) ? req.body.paymentMethod : 'UPI';
+
         await PaymentModel.create({
           organizationId: user.organizationId,
           clientId: retainer.clientId,
+          retainerId: retainer._id,
           amount: advance,
-          currency: 'INR',
-          category: 'Retainer',
-          paymentMethod: req.body.paymentMethod || 'UPI',
+          category: 'Advance',
+          paymentMethod: safePaymentMethod,
           transactionReference: `Period #${retainer.currentPeriod.periodNumber} Advance - ${req.body.notes || 'Retainer Advance'}`,
           paymentDate: req.body.paymentDate ? new Date(req.body.paymentDate) : new Date(),
           status: 'Verified',
@@ -169,7 +172,7 @@ export class RetainerController {
         // Also update client remaining balance
         const client = await ClientModel.findById(retainer.clientId);
         if (client) {
-          client.remainingBalance = Math.max(0, client.remainingBalance - advance);
+          client.remainingBalance = Math.max(0, (client.remainingBalance || 0) - advance);
           await client.save();
         }
       }
@@ -219,26 +222,31 @@ export class RetainerController {
       }
 
       // Update target period's tokenAmount (paid amount) and pendingBalance
+      const fee = targetPeriod.monthlyFee || retainer.monthlyFee;
+      targetPeriod.monthlyFee = fee;
       targetPeriod.tokenAmount = (targetPeriod.tokenAmount || 0) + payAmount;
-      targetPeriod.pendingBalance = Math.max(0, targetPeriod.monthlyFee - targetPeriod.tokenAmount);
+      targetPeriod.pendingBalance = Math.max(0, fee - targetPeriod.tokenAmount);
       targetPeriod.billingStatus = targetPeriod.pendingBalance === 0 ? 'Paid' : 'Invoiced';
 
       retainer.markModified('currentPeriod');
       retainer.markModified('historyPeriods');
       await retainer.save();
 
-      // Update client balance
-      client.remainingBalance = Math.max(0, client.remainingBalance - payAmount);
+      // Update client balance safely
+      client.remainingBalance = Math.max(0, (client.remainingBalance || 0) - payAmount);
       await client.save();
 
       // Create verified Payment record in PaymentModel so inflow, verified cash and ledger reflect it!
+      const validMethods = ['Bank Transfer', 'UPI', 'Credit Card', 'Cash', 'Stripe'];
+      const safePaymentMethod = validMethods.includes(paymentMethod) ? paymentMethod : 'UPI';
+
       const payment = await PaymentModel.create({
         organizationId: user.organizationId,
         clientId: client._id,
+        retainerId: retainer._id,
         amount: payAmount,
-        currency: 'INR',
-        category: 'Retainer',
-        paymentMethod,
+        category: 'Retainer Monthly',
+        paymentMethod: safePaymentMethod,
         transactionReference: `Period #${targetPeriod.periodNumber} - ${notes || 'Retainer Payment'}`,
         paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
         status: 'Verified',
