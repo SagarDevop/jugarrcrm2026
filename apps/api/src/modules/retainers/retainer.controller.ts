@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { RetainerModel } from '../../models/retainer.model';
+import { ClientModel } from '../../models/client.model';
+import { PaymentModel } from '../../models/payment.model';
 import { ApiResponse } from '../../utils/apiResponse';
 import { AppError } from '../../utils/appError';
 import { emitOrgEvent } from '../../sockets';
@@ -114,18 +116,24 @@ export class RetainerController {
       };
       retainer.historyPeriods.push(completedPeriod);
 
-      // Compute next period preserving anchorDay
-      const nextStart = new Date(retainer.currentPeriod.endDate);
-      const { end: nextEnd } = calculateAnchorPeriod(nextStart, retainer.anchorDateDay);
+      // Compute next period preserving anchorDay or using provided dates
+      const nextStart = req.body.startDate ? new Date(req.body.startDate) : new Date(retainer.currentPeriod.endDate);
+      const nextEnd = req.body.endDate
+        ? new Date(req.body.endDate)
+        : calculateAnchorPeriod(nextStart, retainer.anchorDateDay).end;
+
+      const fee = req.body.monthlyFee !== undefined ? Number(req.body.monthlyFee) : retainer.monthlyFee;
+      const advance = Number(req.body.tokenAmount || 0);
+      const pendingBalance = Math.max(0, fee - advance);
 
       retainer.currentPeriod = {
         periodNumber: retainer.currentPeriod.periodNumber + 1,
         startDate: nextStart,
         endDate: nextEnd,
-        monthlyFee: retainer.monthlyFee,
-        billingStatus: 'Pending',
-        tokenAmount: 0,
-        pendingBalance: retainer.monthlyFee,
+        monthlyFee: fee,
+        billingStatus: pendingBalance === 0 ? 'Paid' : advance > 0 ? 'Invoiced' : 'Pending',
+        tokenAmount: advance,
+        pendingBalance,
         deliverablesStatus: {
           reelsCompleted: 0,
           staticPostsCompleted: 0,
@@ -140,6 +148,32 @@ export class RetainerController {
 
       await retainer.save();
 
+      // If advance was provided for next period, record payment in PaymentModel
+      if (advance > 0) {
+        await PaymentModel.create({
+          organizationId: user.organizationId,
+          clientId: retainer.clientId,
+          amount: advance,
+          currency: 'INR',
+          category: 'Retainer',
+          paymentMethod: req.body.paymentMethod || 'UPI',
+          transactionReference: `Period #${retainer.currentPeriod.periodNumber} Advance - ${req.body.notes || 'Retainer Advance'}`,
+          paymentDate: req.body.paymentDate ? new Date(req.body.paymentDate) : new Date(),
+          status: 'Verified',
+          recordedBy: user._id,
+          verifiedBy: user._id,
+          verifiedAt: new Date(),
+          notes: `Advance for Period #${retainer.currentPeriod.periodNumber} (${retainer.serviceName})`,
+        });
+
+        // Also update client remaining balance
+        const client = await ClientModel.findById(retainer.clientId);
+        if (client) {
+          client.remainingBalance = Math.max(0, client.remainingBalance - advance);
+          await client.save();
+        }
+      }
+
       const populated = await RetainerModel.findById(retainer._id)
         .populate('clientId', 'clientName businessName email phone')
         .populate('assignedTeam', 'name email avatar');
@@ -149,8 +183,114 @@ export class RetainerController {
       return ApiResponse.success(
         res,
         populated,
-        `Retainer renewed for period #${retainer.currentPeriod.periodNumber} without date drift`
+        `Retainer renewed for period #${retainer.currentPeriod.periodNumber}`
       );
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async recordPeriodPayment(req: Request, res: Response, next: NextFunction) {
+    try {
+      const user = req.user!;
+      const { id } = req.params;
+      const { amount, periodNumber, paymentDate, paymentMethod = 'UPI', notes } = req.body;
+
+      const payAmount = Number(amount);
+      if (!payAmount || payAmount <= 0) {
+        throw new AppError('Payment amount must be greater than zero.', 400);
+      }
+
+      const retainer = await RetainerModel.findOne({ _id: id, organizationId: user.organizationId });
+      if (!retainer) throw new AppError('Retainer not found.', 404);
+
+      const client = await ClientModel.findOne({ _id: retainer.clientId, organizationId: user.organizationId });
+      if (!client) throw new AppError('Client not found.', 404);
+
+      // Target period: if periodNumber provided and matches a history period, update that; otherwise currentPeriod
+      let targetPeriod: any = retainer.currentPeriod;
+      const pNum = Number(periodNumber);
+
+      if (pNum && pNum !== retainer.currentPeriod.periodNumber) {
+        const found = retainer.historyPeriods.find((p) => p.periodNumber === pNum);
+        if (found) {
+          targetPeriod = found;
+        }
+      }
+
+      // Update target period's tokenAmount (paid amount) and pendingBalance
+      targetPeriod.tokenAmount = (targetPeriod.tokenAmount || 0) + payAmount;
+      targetPeriod.pendingBalance = Math.max(0, targetPeriod.monthlyFee - targetPeriod.tokenAmount);
+      targetPeriod.billingStatus = targetPeriod.pendingBalance === 0 ? 'Paid' : 'Invoiced';
+
+      retainer.markModified('currentPeriod');
+      retainer.markModified('historyPeriods');
+      await retainer.save();
+
+      // Update client balance
+      client.remainingBalance = Math.max(0, client.remainingBalance - payAmount);
+      await client.save();
+
+      // Create verified Payment record in PaymentModel so inflow, verified cash and ledger reflect it!
+      const payment = await PaymentModel.create({
+        organizationId: user.organizationId,
+        clientId: client._id,
+        amount: payAmount,
+        currency: 'INR',
+        category: 'Retainer',
+        paymentMethod,
+        transactionReference: `Period #${targetPeriod.periodNumber} - ${notes || 'Retainer Payment'}`,
+        paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
+        status: 'Verified',
+        recordedBy: user._id,
+        verifiedBy: user._id,
+        verifiedAt: new Date(),
+        notes: `Retainer Period #${targetPeriod.periodNumber} payment for ${retainer.serviceName}`,
+      });
+
+      emitOrgEvent(user.organizationId, 'payment:created', payment);
+      emitOrgEvent(user.organizationId, 'retainer:updated', retainer);
+
+      return ApiResponse.success(res, { retainer, payment }, 'Period payment recorded successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async updatePeriod(req: Request, res: Response, next: NextFunction) {
+    try {
+      const user = req.user!;
+      const { id } = req.params;
+      const { periodNumber, startDate, endDate, monthlyFee, tokenAmount, pendingBalance, billingStatus } = req.body;
+
+      const retainer = await RetainerModel.findOne({ _id: id, organizationId: user.organizationId });
+      if (!retainer) throw new AppError('Retainer not found.', 404);
+
+      let targetPeriod: any = retainer.currentPeriod;
+      const pNum = Number(periodNumber);
+      if (pNum && pNum !== retainer.currentPeriod.periodNumber) {
+        const found = retainer.historyPeriods.find((p) => p.periodNumber === pNum);
+        if (found) targetPeriod = found;
+      }
+
+      if (startDate) targetPeriod.startDate = new Date(startDate);
+      if (endDate) targetPeriod.endDate = new Date(endDate);
+      if (monthlyFee !== undefined) targetPeriod.monthlyFee = Number(monthlyFee);
+      if (tokenAmount !== undefined) targetPeriod.tokenAmount = Number(tokenAmount);
+      if (pendingBalance !== undefined) {
+        targetPeriod.pendingBalance = Number(pendingBalance);
+      } else if (monthlyFee !== undefined || tokenAmount !== undefined) {
+        targetPeriod.pendingBalance = Math.max(0, targetPeriod.monthlyFee - targetPeriod.tokenAmount);
+      }
+      if (billingStatus) targetPeriod.billingStatus = billingStatus;
+
+      retainer.markModified('currentPeriod');
+      retainer.markModified('historyPeriods');
+      await retainer.save();
+
+      emitOrgEvent(user.organizationId, 'retainer:updated', retainer);
+
+      return ApiResponse.success(res, retainer, 'Period updated successfully');
     } catch (error) {
       next(error);
     }

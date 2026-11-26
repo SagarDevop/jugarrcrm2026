@@ -24,6 +24,8 @@ import {
   X,
   AlertCircle,
   Plus,
+  RefreshCw,
+  History,
 } from 'lucide-react';
 
 export const ClientDetailsPage: React.FC = () => {
@@ -35,6 +37,44 @@ export const ClientDetailsPage: React.FC = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showAddRetainerModal, setShowAddRetainerModal] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Modals for Retainer Billing Periods
+  const [selectedPeriodForPayment, setSelectedPeriodForPayment] = useState<{
+    retainerId: string;
+    periodNumber: number;
+    periodLabel: string;
+    monthlyFee: number;
+    pendingBalance: number;
+  } | null>(null);
+
+  const [paymentForm, setPaymentForm] = useState({
+    amount: 0,
+    paymentDate: new Date().toISOString().split('T')[0],
+    paymentMethod: 'UPI',
+    notes: '',
+  });
+
+  const [selectedRetainerForRenew, setSelectedRetainerForRenew] = useState<Retainer | null>(null);
+  const [renewForm, setRenewForm] = useState({
+    startDate: '',
+    endDate: '',
+    monthlyFee: 0,
+    tokenAmount: 0,
+    paymentMethod: 'UPI',
+    notes: '',
+  });
+
+  const [selectedPeriodForEdit, setSelectedPeriodForEdit] = useState<{
+    retainerId: string;
+    periodNumber: number;
+    startDate: string;
+    endDate: string;
+    monthlyFee: number;
+    tokenAmount: number;
+    pendingBalance: number;
+    billingStatus: string;
+  } | null>(null);
+
   const [editFormData, setEditFormData] = useState({
     clientName: '',
     businessName: '',
@@ -91,6 +131,41 @@ export const ClientDetailsPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['admin-retainers'] });
       queryClient.invalidateQueries({ queryKey: ['admin-finance-overview'] });
       setShowAddRetainerModal(false);
+    },
+  });
+
+  const recordPeriodPaymentMutation = useMutation({
+    mutationFn: ({ retainerId, data }: { retainerId: string; data: any }) =>
+      api.post(`/retainers/${retainerId}/period-payment`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['client-details', id] });
+      queryClient.invalidateQueries({ queryKey: ['admin-finance-overview'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-retainers'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-clients'] });
+      setSelectedPeriodForPayment(null);
+    },
+  });
+
+  const renewPeriodMutation = useMutation({
+    mutationFn: ({ retainerId, data }: { retainerId: string; data?: any }) =>
+      api.post(`/retainers/${retainerId}/renew`, data || {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['client-details', id] });
+      queryClient.invalidateQueries({ queryKey: ['admin-finance-overview'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-retainers'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-clients'] });
+      setSelectedRetainerForRenew(null);
+    },
+  });
+
+  const updatePeriodMutation = useMutation({
+    mutationFn: ({ retainerId, data }: { retainerId: string; data: any }) =>
+      api.put(`/retainers/${retainerId}/period`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['client-details', id] });
+      queryClient.invalidateQueries({ queryKey: ['admin-finance-overview'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-retainers'] });
+      setSelectedPeriodForEdit(null);
     },
   });
 
@@ -354,24 +429,293 @@ export const ClientDetailsPage: React.FC = () => {
               )}
             </div>
             {retainers.length > 0 ? (
-              <div className="space-y-3">
-                {retainers.map((ret) => (
-                  <div key={ret._id} className="p-3 bg-white border border-cream-300 rounded-lg shadow-xs">
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs font-bold text-charcoal-900">{ret.serviceName}</p>
-                      <span className="text-xs font-extrabold text-emerald-700">{formatCurrency(ret.monthlyFee)}/mo</span>
+              <div className="space-y-4">
+                {retainers.map((ret) => {
+                  const currentPending = ret.currentPeriod?.pendingBalance || 0;
+                  const totalPendingAllPeriods =
+                    currentPending +
+                    (ret.historyPeriods || []).reduce((acc, p) => acc + (p.pendingBalance || 0), 0);
+
+                  return (
+                    <div
+                      key={ret._id}
+                      className="p-4 bg-white border border-cream-300 rounded-xl shadow-xs space-y-3.5"
+                    >
+                      {/* Retainer Header */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-cream-200">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-bold text-sm text-charcoal-900">{ret.serviceName}</h3>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-100 text-cyan-800 border border-cyan-200">
+                              Monthly Retainer
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-charcoal-500 mt-0.5">
+                            Anchor Day: <strong>{ret.anchorDateDay}th of every month</strong> • Monthly Base:{' '}
+                            <strong className="text-charcoal-900">{formatCurrency(ret.monthlyFee)}/mo</strong>
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-start sm:self-auto">
+                          {isSuperAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const nextStart = new Date(ret.currentPeriod?.endDate || Date.now())
+                                  .toISOString()
+                                  .split('T')[0];
+                                setSelectedRetainerForRenew(ret);
+                                setRenewForm({
+                                  startDate: nextStart,
+                                  endDate: '',
+                                  monthlyFee: ret.monthlyFee,
+                                  tokenAmount: 0,
+                                  paymentMethod: 'UPI',
+                                  notes: `Advance for Period #${(ret.currentPeriod?.periodNumber || 1) + 1}`,
+                                });
+                              }}
+                              className="px-3 py-1.5 bg-[#991B1B] hover:bg-[#7F1D1D] text-white text-xs font-semibold rounded-lg shadow-sm flex items-center gap-1.5 transition-colors cursor-pointer"
+                              title="Start Next Billing Cycle / Month"
+                            >
+                              <RefreshCw size={12} />
+                              <span>Start Next Month Cycle</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* CURRENT BILLING PERIOD (Highlighted Card) */}
+                      <div className="p-3.5 bg-gradient-to-br from-[#FFFDF9] to-[#FAF6EE] border-2 border-amber-300/80 rounded-xl shadow-2xs space-y-3">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 bg-amber-600 text-white rounded text-[10px] font-bold uppercase tracking-wider">
+                              Current Period #{ret.currentPeriod?.periodNumber || 1}
+                            </span>
+                            <span className="text-xs font-bold text-charcoal-900 flex items-center gap-1">
+                              <Calendar size={13} className="text-amber-700" />
+                              {formatDate(ret.currentPeriod?.startDate)} - {formatDate(ret.currentPeriod?.endDate)}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                currentPending === 0
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                                  : (ret.currentPeriod?.tokenAmount || 0) > 0
+                                  ? 'bg-blue-50 text-blue-800 border-blue-300'
+                                  : 'bg-rose-50 text-rose-800 border-rose-300'
+                              }`}
+                            >
+                              {currentPending === 0
+                                ? '✓ Paid Full'
+                                : (ret.currentPeriod?.tokenAmount || 0) > 0
+                                ? 'Partially Paid (Advance)'
+                                : 'Pending Payment'}
+                            </span>
+
+                            {isSuperAdmin && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setSelectedPeriodForEdit({
+                                    retainerId: ret._id,
+                                    periodNumber: ret.currentPeriod.periodNumber,
+                                    startDate: new Date(ret.currentPeriod.startDate)
+                                      .toISOString()
+                                      .split('T')[0],
+                                    endDate: new Date(ret.currentPeriod.endDate)
+                                      .toISOString()
+                                      .split('T')[0],
+                                    monthlyFee: ret.currentPeriod.monthlyFee,
+                                    tokenAmount: ret.currentPeriod.tokenAmount || 0,
+                                    pendingBalance: ret.currentPeriod.pendingBalance,
+                                    billingStatus: ret.currentPeriod.billingStatus,
+                                  })
+                                }
+                                className="text-charcoal-400 hover:text-charcoal-800 p-1 rounded hover:bg-cream-200 transition-colors"
+                                title="Edit Current Period Numbers & Dates"
+                              >
+                                <Edit3 size={13} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Breakdown: Fee vs Advance vs Is Mahine Baki */}
+                        <div className="grid grid-cols-3 gap-2 bg-white p-3 rounded-lg border border-amber-200/60 text-xs shadow-2xs">
+                          <div>
+                            <span className="text-[10px] text-charcoal-500 block uppercase font-semibold">
+                              Total Period Fee
+                            </span>
+                            <span className="text-sm font-extrabold text-charcoal-900">
+                              {formatCurrency(ret.currentPeriod?.monthlyFee || ret.monthlyFee)}
+                            </span>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] text-emerald-700 block uppercase font-semibold">
+                              Advance / Received
+                            </span>
+                            <span className="text-sm font-extrabold text-emerald-700">
+                              {formatCurrency(ret.currentPeriod?.tokenAmount || 0)}
+                            </span>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] text-rose-700 block uppercase font-bold">
+                              Is Mahine Baki (Due)
+                            </span>
+                            <span
+                              className={`text-sm font-extrabold ${
+                                currentPending > 0 ? 'text-[#991B1B]' : 'text-emerald-700'
+                              }`}
+                            >
+                              {formatCurrency(currentPending)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Record Payment button on Current Period */}
+                        {isSuperAdmin && currentPending > 0 && (
+                          <div className="flex justify-end pt-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedPeriodForPayment({
+                                  retainerId: ret._id,
+                                  periodNumber: ret.currentPeriod.periodNumber,
+                                  periodLabel: `Period #${ret.currentPeriod.periodNumber} (${formatDate(ret.currentPeriod.startDate)} - ${formatDate(ret.currentPeriod.endDate)})`,
+                                  monthlyFee: ret.currentPeriod.monthlyFee,
+                                  pendingBalance: currentPending,
+                                });
+                                setPaymentForm({
+                                  amount: currentPending,
+                                  paymentDate: new Date().toISOString().split('T')[0],
+                                  paymentMethod: 'UPI',
+                                  notes: `Payment for Period #${ret.currentPeriod.periodNumber}`,
+                                });
+                              }}
+                              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer transition-colors"
+                            >
+                              <CreditCard size={13} />
+                              <span>Record Payment / Advance (₹{currentPending})</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* PREVIOUS MONTHS BILLING HISTORY */}
+                      {ret.historyPeriods && ret.historyPeriods.length > 0 && (
+                        <div className="pt-2">
+                          <div className="flex items-center gap-1.5 text-xs font-bold text-charcoal-800 mb-2">
+                            <History size={14} className="text-charcoal-500" />
+                            <span>Previous Months Billing History ({ret.historyPeriods.length})</span>
+                          </div>
+
+                          <div className="space-y-2">
+                            {ret.historyPeriods.map((p) => {
+                              const pPending = p.pendingBalance || 0;
+                              return (
+                                <div
+                                  key={p._id || p.periodNumber}
+                                  className="p-3 bg-cream-50 border border-cream-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                                >
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-bold text-charcoal-900">
+                                        Period #{p.periodNumber}
+                                      </span>
+                                      <span className="text-charcoal-600">
+                                        {formatDate(p.startDate)} - {formatDate(p.endDate)}
+                                      </span>
+                                      <span
+                                        className={`px-2 py-0.2 rounded-full text-[9px] font-bold border ${
+                                          pPending === 0
+                                            ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                                            : 'bg-rose-50 text-rose-800 border-rose-300'
+                                        }`}
+                                      >
+                                        {pPending === 0 ? '✓ Paid Full' : 'Pending Due'}
+                                      </span>
+                                    </div>
+
+                                    <div className="flex items-center gap-4 text-[11px] text-charcoal-600 mt-1">
+                                      <span>
+                                        Fee: <strong>{formatCurrency(p.monthlyFee)}</strong>
+                                      </span>
+                                      <span>
+                                        Paid:{' '}
+                                        <strong className="text-emerald-700">
+                                          {formatCurrency(p.tokenAmount || 0)}
+                                        </strong>
+                                      </span>
+                                      <span>
+                                        Pending:{' '}
+                                        <strong
+                                          className={
+                                            pPending > 0 ? 'text-[#991B1B] font-bold' : 'text-emerald-700 font-bold'
+                                          }
+                                        >
+                                          {formatCurrency(pPending)}
+                                        </strong>
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {isSuperAdmin && pPending > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedPeriodForPayment({
+                                          retainerId: ret._id,
+                                          periodNumber: p.periodNumber,
+                                          periodLabel: `Period #${p.periodNumber} (${formatDate(p.startDate)} - ${formatDate(p.endDate)})`,
+                                          monthlyFee: p.monthlyFee,
+                                          pendingBalance: pPending,
+                                        });
+                                        setPaymentForm({
+                                          amount: pPending,
+                                          paymentDate: new Date().toISOString().split('T')[0],
+                                          paymentMethod: 'UPI',
+                                          notes: `Clear pending for Period #${p.periodNumber}`,
+                                        });
+                                      }}
+                                      className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-[11px] font-semibold cursor-pointer shrink-0"
+                                    >
+                                      Clear Pending (₹{pPending})
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Content Deliverables for current month */}
+                      <div className="pt-2 border-t border-cream-200">
+                        <span className="text-[10px] text-charcoal-500 uppercase font-bold tracking-wider block mb-1.5">
+                          Current Month Deliverables Scope
+                        </span>
+                        <div className="grid grid-cols-4 gap-2 bg-cream-100 p-2 rounded-lg border border-cream-300 text-[11px] text-charcoal-800">
+                          <div>
+                            Reels: <strong>{ret.packageDetails?.reelsCount || 0}</strong>
+                          </div>
+                          <div>
+                            Posts: <strong>{ret.packageDetails?.staticPostsCount || 0}</strong>
+                          </div>
+                          <div>
+                            Graphics: <strong>{ret.packageDetails?.graphicDesignsCount || 0}</strong>
+                          </div>
+                          <div>
+                            Stories: <strong>{ret.packageDetails?.storiesCount || 0}</strong>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <p className="text-[11px] text-charcoal-600 mt-1">
-                      Period #{ret.currentPeriod?.periodNumber || 1} • Anchor Day: {ret.anchorDateDay}th of every month
-                    </p>
-                    <div className="mt-2 text-[11px] text-charcoal-800 grid grid-cols-4 gap-2 bg-cream-100 p-2 rounded border border-cream-300">
-                      <div>Reels: <strong>{ret.packageDetails?.reelsCount || 0}</strong></div>
-                      <div>Posts: <strong>{ret.packageDetails?.staticPostsCount || 0}</strong></div>
-                      <div>Graphics: <strong>{ret.packageDetails?.graphicDesignsCount || 0}</strong></div>
-                      <div>Stories: <strong>{ret.packageDetails?.storiesCount || 0}</strong></div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <p className="text-xs text-charcoal-500">No active social media retainers.</p>
@@ -661,6 +1005,407 @@ export const ClientDetailsPage: React.FC = () => {
                   className="px-5 py-2 bg-[#991B1B] hover:bg-[#7F1D1D] disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow-md shadow-red-900/20 cursor-pointer"
                 >
                   {createRetainerMutation.isPending ? 'Activating...' : 'Activate Retainer'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Record Period Payment / Advance Modal */}
+      {selectedPeriodForPayment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="cream-card p-6 max-w-md w-full shadow-2xl border-2 border-cream-300">
+            <div className="flex items-center justify-between pb-4 border-b border-cream-300">
+              <div>
+                <h2 className="text-base font-bold text-charcoal-900">Record Period Payment / Advance</h2>
+                <p className="text-xs text-charcoal-600">{selectedPeriodForPayment.periodLabel}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedPeriodForPayment(null)}
+                className="text-charcoal-500 hover:text-charcoal-900 p-1 rounded-lg hover:bg-cream-200"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="my-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs space-y-1">
+              <div className="flex justify-between text-charcoal-600">
+                <span>Period Monthly Fee:</span>
+                <span className="font-bold text-charcoal-900">{formatCurrency(selectedPeriodForPayment.monthlyFee)}</span>
+              </div>
+              <div className="flex justify-between text-charcoal-600">
+                <span>Pending Balance Due:</span>
+                <span className="font-bold text-[#991B1B]">{formatCurrency(selectedPeriodForPayment.pendingBalance)}</span>
+              </div>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                recordPeriodPaymentMutation.mutate({
+                  retainerId: selectedPeriodForPayment.retainerId,
+                  data: {
+                    periodNumber: selectedPeriodForPayment.periodNumber,
+                    amount: Number(paymentForm.amount),
+                    paymentDate: paymentForm.paymentDate,
+                    paymentMethod: paymentForm.paymentMethod,
+                    notes: paymentForm.notes,
+                  },
+                });
+              }}
+              className="space-y-4 text-xs"
+            >
+              <div>
+                <label className="block text-xs font-semibold text-charcoal-800 mb-1">
+                  Amount Received / Advance (₹) *
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  required
+                  value={paymentForm.amount}
+                  onChange={(e) => setPaymentForm({ ...paymentForm, amount: Number(e.target.value) })}
+                  className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900 font-bold"
+                />
+                <p className="text-[10px] text-charcoal-500 mt-0.5">
+                  Ye amount is period ke paid balance me add hoga aur ledger me entry banega
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-charcoal-800 mb-1">Payment Date *</label>
+                  <input
+                    type="date"
+                    required
+                    value={paymentForm.paymentDate}
+                    onChange={(e) => setPaymentForm({ ...paymentForm, paymentDate: e.target.value })}
+                    className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-charcoal-800 mb-1">Payment Method</label>
+                  <select
+                    value={paymentForm.paymentMethod}
+                    onChange={(e) => setPaymentForm({ ...paymentForm, paymentMethod: e.target.value })}
+                    className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                  >
+                    <option value="UPI">UPI</option>
+                    <option value="Bank Transfer">Bank Transfer (NEFT/IMPS)</option>
+                    <option value="Cash">Cash</option>
+                    <option value="Cheque">Cheque</option>
+                    <option value="Credit Card">Credit Card</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-charcoal-800 mb-1">Notes / Transaction Reference</label>
+                <input
+                  type="text"
+                  value={paymentForm.notes}
+                  onChange={(e) => setPaymentForm({ ...paymentForm, notes: e.target.value })}
+                  placeholder="e.g. ₹500 Advance for next month or GPay Ref"
+                  className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                />
+              </div>
+
+              <div className="pt-4 border-t border-cream-300 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedPeriodForPayment(null)}
+                  className="px-4 py-2 bg-cream-200 hover:bg-cream-300 text-charcoal-800 text-xs font-semibold rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={recordPeriodPaymentMutation.isPending || paymentForm.amount <= 0}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow-md shadow-emerald-900/20 cursor-pointer"
+                >
+                  {recordPeriodPaymentMutation.isPending ? 'Recording...' : 'Confirm & Save Payment'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Start Next Month Period Modal */}
+      {selectedRetainerForRenew && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="cream-card p-6 max-w-md w-full shadow-2xl border-2 border-cream-300">
+            <div className="flex items-center justify-between pb-4 border-b border-cream-300">
+              <div>
+                <h2 className="text-base font-bold text-charcoal-900">Start Next Month Period</h2>
+                <p className="text-xs text-charcoal-600">
+                  Renewing for Period #{(selectedRetainerForRenew.currentPeriod?.periodNumber || 1) + 1}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedRetainerForRenew(null)}
+                className="text-charcoal-500 hover:text-charcoal-900 p-1 rounded-lg hover:bg-cream-200"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                renewPeriodMutation.mutate({
+                  retainerId: selectedRetainerForRenew._id,
+                  data: {
+                    startDate: renewForm.startDate,
+                    endDate: renewForm.endDate || undefined,
+                    monthlyFee: Number(renewForm.monthlyFee),
+                    tokenAmount: Number(renewForm.tokenAmount || 0),
+                    paymentMethod: renewForm.paymentMethod,
+                    notes: renewForm.notes,
+                  },
+                });
+              }}
+              className="space-y-4 mt-4 text-xs"
+            >
+              <div className="p-3 bg-cyan-50 border border-cyan-200 rounded-xl text-xs text-cyan-900">
+                Pichhla period history me save ho jayega aur naya mahina start hoga with clean anchor billing date.
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-charcoal-800 mb-1">
+                  Next Period Start Date *
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={renewForm.startDate}
+                  onChange={(e) => setRenewForm({ ...renewForm, startDate: e.target.value })}
+                  className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-charcoal-800 mb-1">
+                  Period Monthly Fee (₹) *
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  required
+                  value={renewForm.monthlyFee}
+                  onChange={(e) => setRenewForm({ ...renewForm, monthlyFee: Number(e.target.value) })}
+                  className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-charcoal-800 mb-1">
+                  Advance Payment for this new period (₹) (Optional)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={renewForm.tokenAmount}
+                  onChange={(e) => setRenewForm({ ...renewForm, tokenAmount: Number(e.target.value) })}
+                  className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                  placeholder="e.g. 500 advance"
+                />
+                <p className="text-[10px] text-charcoal-500 mt-0.5">
+                  Agar client ne naye mahine ke liye advance diya hai (jaise ₹500), yahan enter karein
+                </p>
+              </div>
+
+              {renewForm.tokenAmount > 0 && (
+                <div>
+                  <label className="block text-xs font-semibold text-charcoal-800 mb-1">Advance Payment Method</label>
+                  <select
+                    value={renewForm.paymentMethod}
+                    onChange={(e) => setRenewForm({ ...renewForm, paymentMethod: e.target.value })}
+                    className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 focus:outline-none focus:border-charcoal-900"
+                  >
+                    <option value="UPI">UPI</option>
+                    <option value="Bank Transfer">Bank Transfer</option>
+                    <option value="Cash">Cash</option>
+                    <option value="Credit Card">Credit Card</option>
+                  </select>
+                </div>
+              )}
+
+              <div className="pt-4 border-t border-cream-300 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedRetainerForRenew(null)}
+                  className="px-4 py-2 bg-cream-200 hover:bg-cream-300 text-charcoal-800 text-xs font-semibold rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={renewPeriodMutation.isPending}
+                  className="px-5 py-2 bg-[#991B1B] hover:bg-[#7F1D1D] disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow-md shadow-red-900/20 cursor-pointer"
+                >
+                  {renewPeriodMutation.isPending ? 'Starting...' : 'Start Next Month Period'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Adjust Period Details Modal */}
+      {selectedPeriodForEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="cream-card p-6 max-w-md w-full shadow-2xl border-2 border-cream-300">
+            <div className="flex items-center justify-between pb-4 border-b border-cream-300">
+              <div>
+                <h2 className="text-base font-bold text-charcoal-900">
+                  Adjust Period #{selectedPeriodForEdit.periodNumber} Details
+                </h2>
+                <p className="text-xs text-charcoal-600">Manually update period fee, advance or pending balance</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedPeriodForEdit(null)}
+                className="text-charcoal-500 hover:text-charcoal-900 p-1 rounded-lg hover:bg-cream-200"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                updatePeriodMutation.mutate({
+                  retainerId: selectedPeriodForEdit.retainerId,
+                  data: {
+                    periodNumber: selectedPeriodForEdit.periodNumber,
+                    startDate: selectedPeriodForEdit.startDate,
+                    endDate: selectedPeriodForEdit.endDate,
+                    monthlyFee: Number(selectedPeriodForEdit.monthlyFee),
+                    tokenAmount: Number(selectedPeriodForEdit.tokenAmount),
+                    pendingBalance: Number(selectedPeriodForEdit.pendingBalance),
+                    billingStatus: selectedPeriodForEdit.billingStatus,
+                  },
+                });
+              }}
+              className="space-y-4 mt-4 text-xs"
+            >
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-charcoal-800 mb-1">Start Date *</label>
+                  <input
+                    type="date"
+                    required
+                    value={selectedPeriodForEdit.startDate}
+                    onChange={(e) =>
+                      setSelectedPeriodForEdit({ ...selectedPeriodForEdit, startDate: e.target.value })
+                    }
+                    className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-charcoal-800 mb-1">End Date *</label>
+                  <input
+                    type="date"
+                    required
+                    value={selectedPeriodForEdit.endDate}
+                    onChange={(e) =>
+                      setSelectedPeriodForEdit({ ...selectedPeriodForEdit, endDate: e.target.value })
+                    }
+                    className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-charcoal-800 mb-1">Period Fee (₹) *</label>
+                <input
+                  type="number"
+                  min="0"
+                  required
+                  value={selectedPeriodForEdit.monthlyFee}
+                  onChange={(e) => {
+                    const fee = Number(e.target.value);
+                    setSelectedPeriodForEdit({
+                      ...selectedPeriodForEdit,
+                      monthlyFee: fee,
+                      pendingBalance: Math.max(0, fee - selectedPeriodForEdit.tokenAmount),
+                    });
+                  }}
+                  className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 font-bold"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-charcoal-800 mb-1">Paid / Advance (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={selectedPeriodForEdit.tokenAmount}
+                    onChange={(e) => {
+                      const advance = Number(e.target.value);
+                      setSelectedPeriodForEdit({
+                        ...selectedPeriodForEdit,
+                        tokenAmount: advance,
+                        pendingBalance: Math.max(0, selectedPeriodForEdit.monthlyFee - advance),
+                      });
+                    }}
+                    className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 text-emerald-700 font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-charcoal-800 mb-1">Is Mahine Baki (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={selectedPeriodForEdit.pendingBalance}
+                    onChange={(e) =>
+                      setSelectedPeriodForEdit({
+                        ...selectedPeriodForEdit,
+                        pendingBalance: Number(e.target.value),
+                      })
+                    }
+                    className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900 text-[#991B1B] font-bold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-charcoal-800 mb-1">Billing Status</label>
+                <select
+                  value={selectedPeriodForEdit.billingStatus}
+                  onChange={(e) =>
+                    setSelectedPeriodForEdit({ ...selectedPeriodForEdit, billingStatus: e.target.value })
+                  }
+                  className="w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-xs text-charcoal-900"
+                >
+                  <option value="Paid">Paid Full</option>
+                  <option value="Invoiced">Invoiced (Partially Paid)</option>
+                  <option value="Pending">Pending</option>
+                  <option value="Overdue">Overdue</option>
+                </select>
+              </div>
+
+              <div className="pt-4 border-t border-cream-300 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedPeriodForEdit(null)}
+                  className="px-4 py-2 bg-cream-200 hover:bg-cream-300 text-charcoal-800 text-xs font-semibold rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={updatePeriodMutation.isPending}
+                  className="px-5 py-2 bg-[#991B1B] hover:bg-[#7F1D1D] disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow-md shadow-red-900/20 cursor-pointer"
+                >
+                  {updatePeriodMutation.isPending ? 'Saving...' : 'Save Adjustments'}
                 </button>
               </div>
             </form>
