@@ -11,11 +11,16 @@ import { ApiResponse } from '../../utils/apiResponse';
 import { AppError } from '../../utils/appError';
 import { emitOrgEvent } from '../../sockets';
 import { logAudit } from '../../middleware/audit.middleware';
+import { FinancialSyncService } from '../../services/financialSync.service';
 
 export class PaymentController {
   static async listPayments(req: Request, res: Response, next: NextFunction) {
     try {
       const user = req.user!;
+
+      // Automatically reconcile client advances & retainer periods into payments ledger
+      await FinancialSyncService.syncFinancialPipeline(user.organizationId, user._id);
+
       const filter: any = { organizationId: user.organizationId };
 
       if (req.query.status) filter.status = req.query.status;
@@ -130,6 +135,18 @@ export class PaymentController {
             project.paidAmount += payment.amount;
             project.remainingAmount = Math.max(0, project.totalAmount - project.paidAmount);
             await project.save();
+          }
+        }
+
+        if (payment.retainerId) {
+          const retainer = await RetainerModel.findOne({ _id: payment.retainerId, organizationId: user.organizationId });
+          if (retainer && retainer.currentPeriod) {
+            retainer.currentPeriod.tokenAmount = (retainer.currentPeriod.tokenAmount || 0) + payment.amount;
+            retainer.currentPeriod.pendingBalance = Math.max(0, retainer.currentPeriod.monthlyFee - retainer.currentPeriod.tokenAmount);
+            retainer.currentPeriod.billingStatus = retainer.currentPeriod.pendingBalance === 0 ? 'Paid' : 'Invoiced';
+            retainer.markModified('currentPeriod');
+            await retainer.save();
+            emitOrgEvent(user.organizationId, 'retainer:updated', retainer);
           }
         }
       }

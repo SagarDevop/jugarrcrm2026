@@ -169,6 +169,8 @@ export const ClientDetailsPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['client-details', id] });
       queryClient.invalidateQueries({ queryKey: ['admin-finance-overview'] });
       queryClient.invalidateQueries({ queryKey: ['admin-retainers'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-payments'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-clients'] });
       setSelectedPeriodForEdit(null);
     },
   });

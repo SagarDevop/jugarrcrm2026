@@ -108,6 +108,10 @@ export class ClientController {
         .populate('assignedProjectManager', 'name email avatar')
         .populate('createdBy', 'name email');
 
+      const initialPaid = token + advance;
+      let createdRetainer: any = null;
+      let createdProject: any = null;
+
       // Auto-create Retainer contract if service category is Social Media Retainer
       if (client.serviceCategory && /retainer/i.test(client.serviceCategory)) {
         const start = new Date(parsedDate);
@@ -115,7 +119,7 @@ export class ClientController {
         const { end } = calculateAnchorPeriod(start, anchorDay);
         const fee = totalContract > 0 ? totalContract : Number(data.customQuotation || 0);
 
-        await RetainerModel.create({
+        createdRetainer = await RetainerModel.create({
           organizationId: user.organizationId,
           clientId: client._id,
           serviceName: `${client.businessName} - Social Media Retainer`,
@@ -138,8 +142,8 @@ export class ClientController {
             startDate: start,
             endDate: end,
             monthlyFee: fee,
-            billingStatus: remainingBalance === 0 ? 'Paid' : 'Pending',
-            tokenAmount: token,
+            billingStatus: remainingBalance === 0 ? 'Paid' : initialPaid > 0 ? 'Invoiced' : 'Pending',
+            tokenAmount: initialPaid,
             pendingBalance: remainingBalance,
             deliverablesStatus: {
               reelsCompleted: 0,
@@ -153,13 +157,14 @@ export class ClientController {
           createdBy: user._id,
         });
       } else if (client.serviceCategory && /web|software|dev/i.test(client.serviceCategory)) {
-        await ProjectModel.create({
+        createdProject = await ProjectModel.create({
           organizationId: user.organizationId,
           clientId: client._id,
           name: `${client.businessName} - Web Platform Development`,
           category: 'Web Development',
           status: 'Planning',
           totalAmount: totalContract,
+          paidAmount: initialPaid,
           remainingAmount: remainingBalance,
           milestones: [
             { title: 'Requirements & Scope Finalization', status: 'Completed' },
@@ -169,6 +174,27 @@ export class ClientController {
           ],
           createdBy: user._id,
         });
+      }
+
+      // If initial advance or token was paid, automatically record it in PaymentModel!
+      if (initialPaid > 0) {
+        const payment = await PaymentModel.create({
+          organizationId: user.organizationId,
+          clientId: client._id,
+          retainerId: createdRetainer?._id,
+          projectId: createdProject?._id,
+          amount: initialPaid,
+          category: advance > 0 ? 'Advance' : 'Token',
+          paymentMethod: 'UPI',
+          transactionReference: `Onboarding Advance - ${client.businessName}`,
+          paymentDate: parsedDate,
+          status: 'Verified',
+          recordedBy: user._id,
+          verifiedBy: user._id,
+          verifiedAt: parsedDate,
+          notes: `Advance payment recorded during client onboarding for ${client.businessName}`,
+        });
+        emitOrgEvent(user.organizationId, 'payment:created', payment);
       }
 
       await ActivityEventModel.create({

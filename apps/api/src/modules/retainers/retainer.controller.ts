@@ -281,20 +281,54 @@ export class RetainerController {
         if (found) targetPeriod = found;
       }
 
+      const oldPaid = targetPeriod.tokenAmount || 0;
+      const newPaid = tokenAmount !== undefined ? Number(tokenAmount) : oldPaid;
+      const diff = newPaid - oldPaid;
+
       if (startDate) targetPeriod.startDate = new Date(startDate);
       if (endDate) targetPeriod.endDate = new Date(endDate);
       if (monthlyFee !== undefined) targetPeriod.monthlyFee = Number(monthlyFee);
-      if (tokenAmount !== undefined) targetPeriod.tokenAmount = Number(tokenAmount);
+      if (tokenAmount !== undefined) targetPeriod.tokenAmount = newPaid;
       if (pendingBalance !== undefined) {
         targetPeriod.pendingBalance = Number(pendingBalance);
       } else if (monthlyFee !== undefined || tokenAmount !== undefined) {
-        targetPeriod.pendingBalance = Math.max(0, targetPeriod.monthlyFee - targetPeriod.tokenAmount);
+        targetPeriod.pendingBalance = Math.max(0, (targetPeriod.monthlyFee || retainer.monthlyFee) - targetPeriod.tokenAmount);
       }
-      if (billingStatus) targetPeriod.billingStatus = billingStatus;
+      if (billingStatus) {
+        targetPeriod.billingStatus = billingStatus;
+      } else {
+        targetPeriod.billingStatus = targetPeriod.pendingBalance === 0 ? 'Paid' : targetPeriod.tokenAmount > 0 ? 'Invoiced' : 'Pending';
+      }
 
       retainer.markModified('currentPeriod');
       retainer.markModified('historyPeriods');
       await retainer.save();
+
+      // If more advance/token was adjusted, create verified Payment record and update client balance
+      if (diff > 0) {
+        const payment = await PaymentModel.create({
+          organizationId: user.organizationId,
+          clientId: retainer.clientId,
+          retainerId: retainer._id,
+          amount: diff,
+          category: 'Advance',
+          paymentMethod: 'UPI',
+          transactionReference: `Period #${targetPeriod.periodNumber} Advance - ${retainer.serviceName}`,
+          paymentDate: new Date(),
+          status: 'Verified',
+          recordedBy: user._id,
+          verifiedBy: user._id,
+          verifiedAt: new Date(),
+          notes: `Advance payment adjusted for Period #${targetPeriod.periodNumber}`,
+        });
+        emitOrgEvent(user.organizationId, 'payment:created', payment);
+
+        const client = await ClientModel.findById(retainer.clientId);
+        if (client) {
+          client.remainingBalance = Math.max(0, (client.remainingBalance || 0) - diff);
+          await client.save();
+        }
+      }
 
       emitOrgEvent(user.organizationId, 'retainer:updated', retainer);
 

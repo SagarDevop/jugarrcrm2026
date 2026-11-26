@@ -9,12 +9,16 @@ import { UserModel } from '../../models/user.model';
 import { LeadModel } from '../../models/lead.model';
 import { ApiResponse } from '../../utils/apiResponse';
 import { calculateAnchorPeriod } from '../retainers/retainer.controller';
+import { FinancialSyncService } from '../../services/financialSync.service';
 
 export class FinanceController {
   static async getOverview(req: Request, res: Response, next: NextFunction) {
     try {
       const orgId = new mongoose.Types.ObjectId(req.user!.organizationId);
       const timeframe = (req.query.timeframe as string) || '6m';
+
+      // Real-time synchronization of all client advances, retainers, and verified payments
+      await FinancialSyncService.syncFinancialPipeline(orgId, req.user!._id);
 
       let startDate = new Date();
       if (timeframe === '30d') {

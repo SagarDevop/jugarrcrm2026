@@ -46,6 +46,8 @@ export const AdminClientsPage: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-clients'] });
       queryClient.invalidateQueries({ queryKey: ['admin-finance-overview'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-payments'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-retainers'] });
       setShowAddModal(false);
       setFormError(null);
       setFormData({
