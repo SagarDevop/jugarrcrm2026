@@ -255,6 +255,69 @@ export class FinanceController {
       ]);
       const projectStatusDistribution = projectStatuses.map((p) => ({ status: p._id, count: p.count }));
 
+      // MRR Breakdown (Which client contributes how much to monthly retainer revenue)
+      const activeRetainersList = await RetainerModel.find({ organizationId: orgId, status: 'Active' })
+        .populate('clientId', 'clientName businessName')
+        .lean();
+      const mrrBreakdown = activeRetainersList.map((r: any) => ({
+        retainerId: r._id.toString(),
+        clientName: r.clientId?.clientName || r.serviceName,
+        businessName: r.clientId?.businessName || '',
+        monthlyFee: r.monthlyFee,
+        tokenAmount: r.currentPeriod?.tokenAmount || 0,
+        pendingBalance: r.currentPeriod?.pendingBalance || 0,
+        billingStatus: r.currentPeriod?.billingStatus || 'Pending',
+        periodDates: r.currentPeriod
+          ? `${new Date(r.currentPeriod.startDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} - ${new Date(r.currentPeriod.endDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}`
+          : 'Active Cycle',
+      }));
+
+      // Receivables Breakdown (Who owes pending balances)
+      const clientsWithDues = await ClientModel.find({
+        organizationId: orgId,
+        remainingBalance: { $gt: 0 },
+        status: { $in: ['Active', 'Prospect', 'On Hold'] },
+      })
+        .select('clientName businessName remainingBalance totalContractAmount serviceCategory')
+        .sort({ remainingBalance: -1 })
+        .lean();
+      const receivablesBreakdown = clientsWithDues.map((c: any) => ({
+        _id: c._id.toString(),
+        clientName: c.clientName,
+        businessName: c.businessName,
+        remainingBalance: c.remainingBalance,
+        totalContractAmount: c.totalContractAmount || 0,
+        serviceCategory: c.serviceCategory || 'General',
+      }));
+
+      // Recent Verified Deposits / Inflows
+      const recentInflowsRaw = await PaymentModel.find({ organizationId: orgId, status: 'Verified' })
+        .populate('clientId', 'clientName businessName')
+        .sort({ paymentDate: -1 })
+        .limit(8)
+        .lean();
+      const recentInflows = recentInflowsRaw.map((p: any) => ({
+        _id: p._id.toString(),
+        amount: p.amount,
+        clientName: p.clientId?.clientName || 'Direct',
+        businessName: p.clientId?.businessName || '',
+        category: p.category,
+        paymentMethod: p.paymentMethod,
+        paymentDate: p.paymentDate,
+        transactionReference: p.transactionReference,
+      }));
+
+      // Expenses Breakdown by Category
+      const expensesByCategory = await ExpenseModel.aggregate([
+        { $match: { organizationId: orgId, approvalStatus: 'Approved' } },
+        { $group: { _id: '$category', total: { $sum: '$amount' } } },
+        { $sort: { total: -1 } },
+      ]);
+      const expensesBreakdown = expensesByCategory.map((e) => ({
+        category: e._id || 'Operational',
+        total: e.total,
+      }));
+
       return ApiResponse.success(res, {
         totalClients,
         activeClients,
@@ -273,6 +336,10 @@ export class FinanceController {
         serviceRevenueBreakdown,
         salesPerformance,
         projectStatusDistribution,
+        mrrBreakdown,
+        receivablesBreakdown,
+        recentInflows,
+        expensesBreakdown,
       });
     } catch (error) {
       next(error);

@@ -376,6 +376,38 @@ export interface AdminDashboardKPIs {
   serviceRevenueBreakdown: { service: string; amount: number }[];
   salesPerformance: { name: string; revenue: number; leads: number; conversions: number }[];
   projectStatusDistribution: { status: string; count: number }[];
+  mrrBreakdown?: {
+    retainerId: string;
+    clientName: string;
+    businessName: string;
+    monthlyFee: number;
+    tokenAmount: number;
+    pendingBalance: number;
+    billingStatus: string;
+    periodDates: string;
+  }[];
+  receivablesBreakdown?: {
+    _id: string;
+    clientName: string;
+    businessName: string;
+    remainingBalance: number;
+    totalContractAmount: number;
+    serviceCategory?: string;
+  }[];
+  recentInflows?: {
+    _id: string;
+    amount: number;
+    clientName: string;
+    businessName: string;
+    category: string;
+    paymentMethod: string;
+    paymentDate: string;
+    transactionReference: string;
+  }[];
+  expensesBreakdown?: {
+    category: string;
+    total: number;
+  }[];
 }
 
 export interface SalesDashboardKPIs {
