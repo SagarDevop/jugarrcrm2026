@@ -13,6 +13,16 @@ import { canViewFinancials } from '../../middleware/rbac.middleware';
 import { USER_ROLES } from '@agencyos/shared';
 import { calculateAnchorPeriod } from '../retainers/retainer.controller';
 
+// Helper to check if a user is permitted to view payment slips and financials for a given client:
+// Super Admin always can; Sales Members can ONLY if they created the client themselves.
+export const checkCanViewClientFinancials = (user: any, clientCreatedBy: any): boolean => {
+  if (!user) return false;
+  if (user.role === USER_ROLES.SUPER_ADMIN) return true;
+  if (!clientCreatedBy) return false;
+  const createdById = clientCreatedBy._id ? clientCreatedBy._id.toString() : clientCreatedBy.toString();
+  return createdById === user._id.toString();
+};
+
 // Helper to sanitize client record for sales users who lack finance permissions
 export const sanitizeClientForSales = (clientObj: any, allowFinance: boolean) => {
   if (allowFinance) return clientObj;
@@ -49,12 +59,14 @@ export class ClientController {
       const clients = await ClientModel.find(filter)
         .populate('assignedSalesMember', 'name email avatar')
         .populate('assignedProjectManager', 'name email avatar')
-        .populate('createdBy', 'name email')
+        .populate('createdBy', 'name email _id')
         .sort({ createdAt: -1 })
         .lean();
 
-      const allowFinance = canViewFinancials(user);
-      const sanitizedClients = clients.map((c) => sanitizeClientForSales(c, allowFinance));
+      const sanitizedClients = clients.map((c) => {
+        const canView = checkCanViewClientFinancials(user, c.createdBy);
+        return sanitizeClientForSales(c, canView);
+      });
 
       return ApiResponse.success(res, sanitizedClients);
     } catch (error) {
@@ -223,12 +235,15 @@ export class ClientController {
       })
         .populate('assignedSalesMember', 'name email avatar phone')
         .populate('assignedProjectManager', 'name email avatar phone')
-        .populate('createdBy', 'name email')
+        .populate('createdBy', 'name email _id')
         .lean();
 
       if (!client) throw new AppError('Client not found.', 404);
 
-      const allowFinance = canViewFinancials(user);
+      // Super Admin can view all payments & slips.
+      // Sales members can ONLY view payments & slips for clients THEY created themselves.
+      // For clients assigned by Admin, sales members only see client data & deliverables scope.
+      const canViewThisClientPayments = checkCanViewClientFinancials(user, client.createdBy);
 
       // Associated records
       const [projects, retainers, calls, followups, payments] = await Promise.all([
@@ -236,20 +251,58 @@ export class ClientController {
         RetainerModel.find({ clientId: client._id, organizationId: user.organizationId }),
         CallModel.find({ clientId: client._id, organizationId: user.organizationId }).sort({ callDate: -1 }),
         FollowUpModel.find({ clientId: client._id, organizationId: user.organizationId }).sort({ dueDate: 1 }),
-        allowFinance
+        canViewThisClientPayments
           ? PaymentModel.find({ clientId: client._id, organizationId: user.organizationId }).sort({ paymentDate: -1 })
           : Promise.resolve([]),
       ]);
 
-      const sanitizedClient = sanitizeClientForSales(client, allowFinance);
+      const sanitizedClient = sanitizeClientForSales(client, canViewThisClientPayments);
+
+      // Sanitize Retainers: If not permitted to view finances for this client,
+      // hide fee and balance amounts while preserving deliverables scope (reels, posts, graphics, stories)
+      const sanitizedRetainers = canViewThisClientPayments
+        ? retainers
+        : retainers.map((r: any) => {
+            const ret = r.toObject ? r.toObject() : { ...r };
+            delete ret.monthlyFee;
+            if (ret.currentPeriod) {
+              const cp = { ...ret.currentPeriod };
+              delete cp.monthlyFee;
+              delete cp.tokenAmount;
+              delete cp.pendingBalance;
+              ret.currentPeriod = cp;
+            }
+            if (ret.historyPeriods) {
+              ret.historyPeriods = ret.historyPeriods.map((hp: any) => {
+                const p = { ...hp };
+                delete p.monthlyFee;
+                delete p.tokenAmount;
+                delete p.pendingBalance;
+                return p;
+              });
+            }
+            return ret;
+          });
+
+      // Sanitize Projects: Hide financial contract values if not permitted
+      const sanitizedProjects = canViewThisClientPayments
+        ? projects
+        : projects.map((p: any) => {
+            const proj = p.toObject ? p.toObject() : { ...p };
+            delete proj.totalAmount;
+            delete proj.paidAmount;
+            delete proj.remainingAmount;
+            return proj;
+          });
 
       return ApiResponse.success(res, {
         client: sanitizedClient,
-        projects,
-        retainers,
+        projects: sanitizedProjects,
+        retainers: sanitizedRetainers,
         calls,
         followups,
         payments,
+        canViewPayments: canViewThisClientPayments,
       });
     } catch (error) {
       next(error);

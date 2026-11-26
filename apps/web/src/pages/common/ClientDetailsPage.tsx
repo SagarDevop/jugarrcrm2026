@@ -108,6 +108,7 @@ export const ClientDetailsPage: React.FC = () => {
     calls: Call[];
     followups: FollowUp[];
     payments: Payment[];
+    canViewPayments?: boolean;
   }>({
     queryKey: ['client-details', id],
     queryFn: () => api.get(`/clients/${id}`),
@@ -264,6 +265,13 @@ export const ClientDetailsPage: React.FC = () => {
 
   const { client, projects, retainers, calls, followups, payments } = data;
 
+  const clientCreatedById = client?.createdBy
+    ? ((client.createdBy as any)._id ? (client.createdBy as any)._id.toString() : (client.createdBy as any).toString())
+    : null;
+  const isClientCreator = Boolean(user?._id && clientCreatedById === user._id.toString());
+  // Can view payment slips & financials: Super Admin OR the sales member who personally registered/added this client
+  const canViewPayments = Boolean(data?.canViewPayments ?? (isSuperAdmin || isClientCreator));
+
   const handleOpenEdit = () => {
     if (!client) return;
     const initialDate = client.startDate || client.createdAt;
@@ -353,7 +361,7 @@ export const ClientDetailsPage: React.FC = () => {
         </div>
 
         {/* Financial Overview (If authorized) */}
-        {client.totalContractAmount !== undefined && (
+        {canViewPayments && client.totalContractAmount !== undefined ? (
           <div className="flex items-center gap-4 bg-white border border-cream-300 p-3.5 rounded-xl shadow-xs">
             <div>
               <span className="text-[10px] text-charcoal-500 block uppercase font-bold tracking-wider">Contract Value</span>
@@ -371,7 +379,15 @@ export const ClientDetailsPage: React.FC = () => {
               </span>
             </div>
           </div>
-        )}
+        ) : !canViewPayments ? (
+          <div className="flex items-center gap-2.5 px-3.5 py-2 bg-cream-100/90 border border-cream-300 rounded-xl text-xs text-charcoal-700 shadow-2xs">
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse" />
+            <div>
+              <span className="font-bold text-charcoal-900 block text-xs">Assigned Account</span>
+              <span className="text-[10px] text-charcoal-500">Authorized for client data & operational deliverables</span>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/* Grid: Contact Information & Associated Contracts */}
@@ -523,8 +539,12 @@ export const ClientDetailsPage: React.FC = () => {
                             </span>
                           </div>
                           <p className="text-[11px] text-charcoal-500 mt-0.5">
-                            Anchor Day: <strong>{ret.anchorDateDay}th of every month</strong> • Monthly Base:{' '}
-                            <strong className="text-charcoal-900">{formatCurrency(ret.monthlyFee)}/mo</strong>
+                            Anchor Day: <strong>{ret.anchorDateDay}th of every month</strong>
+                            {canViewPayments && ret.monthlyFee !== undefined && (
+                              <>
+                                {' '}• Monthly Base: <strong className="text-charcoal-900">{formatCurrency(ret.monthlyFee)}/mo</strong>
+                              </>
+                            )}
                           </p>
                         </div>
 
@@ -614,42 +634,58 @@ export const ClientDetailsPage: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* Breakdown: Fee vs Advance vs Is Mahine Baki */}
-                        <div className="grid grid-cols-3 gap-2 bg-white p-3 rounded-lg border border-amber-200/60 text-xs shadow-2xs">
-                          <div>
-                            <span className="text-[10px] text-charcoal-500 block uppercase font-semibold">
-                              Total Period Fee
-                            </span>
-                            <span className="text-sm font-extrabold text-charcoal-900">
-                              {formatCurrency(ret.currentPeriod?.monthlyFee || ret.monthlyFee)}
+                        {/* Breakdown: Fee vs Advance vs Is Mahine Baki (Hidden for assigned clients, visible for creator & admin) */}
+                        {canViewPayments ? (
+                          <div className="grid grid-cols-3 gap-2 bg-white p-3 rounded-lg border border-amber-200/60 text-xs shadow-2xs">
+                            <div>
+                              <span className="text-[10px] text-charcoal-500 block uppercase font-semibold">
+                                Total Period Fee
+                              </span>
+                              <span className="text-sm font-extrabold text-charcoal-900">
+                                {formatCurrency(ret.currentPeriod?.monthlyFee || ret.monthlyFee)}
+                              </span>
+                            </div>
+
+                            <div>
+                              <span className="text-[10px] text-emerald-700 block uppercase font-semibold">
+                                Advance / Received
+                              </span>
+                              <span className="text-sm font-extrabold text-emerald-700">
+                                {formatCurrency(ret.currentPeriod?.tokenAmount || 0)}
+                              </span>
+                            </div>
+
+                            <div>
+                              <span className="text-[10px] text-rose-700 block uppercase font-bold">
+                                Is Mahine Baki (Due)
+                              </span>
+                              <span
+                                className={`text-sm font-extrabold ${
+                                  currentPending > 0 ? 'text-[#991B1B]' : 'text-emerald-700'
+                                }`}
+                              >
+                                {formatCurrency(currentPending)}
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="bg-white p-3 rounded-lg border border-cream-300 text-xs shadow-2xs flex items-center justify-between">
+                            <div>
+                              <span className="text-[10px] text-charcoal-500 block uppercase font-semibold">
+                                Active Retainer Cycle
+                              </span>
+                              <span className="text-xs font-bold text-charcoal-900">
+                                Period #{ret.currentPeriod?.periodNumber || 1} ({formatDate(ret.currentPeriod?.startDate)} - {formatDate(ret.currentPeriod?.endDate)})
+                              </span>
+                            </div>
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-cyan-100 text-cyan-800 border border-cyan-200">
+                              Deliverables Scope Active
                             </span>
                           </div>
+                        )}
 
-                          <div>
-                            <span className="text-[10px] text-emerald-700 block uppercase font-semibold">
-                              Advance / Received
-                            </span>
-                            <span className="text-sm font-extrabold text-emerald-700">
-                              {formatCurrency(ret.currentPeriod?.tokenAmount || 0)}
-                            </span>
-                          </div>
-
-                          <div>
-                            <span className="text-[10px] text-rose-700 block uppercase font-bold">
-                              Is Mahine Baki (Due)
-                            </span>
-                            <span
-                              className={`text-sm font-extrabold ${
-                                currentPending > 0 ? 'text-[#991B1B]' : 'text-emerald-700'
-                              }`}
-                            >
-                              {formatCurrency(currentPending)}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Record Payment button on Current Period */}
-                        {isSuperAdmin && currentPending > 0 && (
+                        {/* Record Payment button on Current Period (Admin or Creator) */}
+                        {canViewPayments && isSuperAdmin && currentPending > 0 && (
                           <div className="flex justify-end pt-1">
                             <button
                               type="button"
@@ -712,27 +748,29 @@ export const ClientDetailsPage: React.FC = () => {
                                       </span>
                                     </div>
 
-                                    <div className="flex items-center gap-4 text-[11px] text-charcoal-600 mt-1">
-                                      <span>
-                                        Fee: <strong>{formatCurrency(p.monthlyFee)}</strong>
-                                      </span>
-                                      <span>
-                                        Paid:{' '}
-                                        <strong className="text-emerald-700">
-                                          {formatCurrency(p.tokenAmount || 0)}
-                                        </strong>
-                                      </span>
-                                      <span>
-                                        Pending:{' '}
-                                        <strong
-                                          className={
-                                            pPending > 0 ? 'text-[#991B1B] font-bold' : 'text-emerald-700 font-bold'
-                                          }
-                                        >
-                                          {formatCurrency(pPending)}
-                                        </strong>
-                                      </span>
-                                    </div>
+                                    {canViewPayments && (
+                                      <div className="flex items-center gap-4 text-[11px] text-charcoal-600 mt-1">
+                                        <span>
+                                          Fee: <strong>{formatCurrency(p.monthlyFee)}</strong>
+                                        </span>
+                                        <span>
+                                          Paid:{' '}
+                                          <strong className="text-emerald-700">
+                                            {formatCurrency(p.tokenAmount || 0)}
+                                          </strong>
+                                        </span>
+                                        <span>
+                                          Pending:{' '}
+                                          <strong
+                                            className={
+                                              pPending > 0 ? 'text-[#991B1B] font-bold' : 'text-emerald-700 font-bold'
+                                            }
+                                          >
+                                            {formatCurrency(pPending)}
+                                          </strong>
+                                        </span>
+                                      </div>
+                                    )}
                                   </div>
 
                                   {isSuperAdmin && pPending > 0 && (
@@ -794,8 +832,8 @@ export const ClientDetailsPage: React.FC = () => {
             )}
           </div>
 
-          {/* Verified Payments Ledger (Admin / Finance permitted only) */}
-          {payments.length > 0 && (
+          {/* Verified Payments Ledger (Admin or Client Creator only; hidden for assigned clients) */}
+          {canViewPayments && payments.length > 0 && (
             <div className="cream-card p-5">
               <h2 className="text-sm font-bold text-charcoal-900 flex items-center gap-2 mb-3">
                 <CreditCard size={16} className="text-emerald-700" /> Verified Payment History
